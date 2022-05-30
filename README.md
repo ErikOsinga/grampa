@@ -1,0 +1,2 @@
+# magneticfields
+Modelling magnetic fields 

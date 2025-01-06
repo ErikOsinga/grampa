@@ -788,9 +788,9 @@ def BandAfieldfiles(N,pixsize,xistr,Lambda_max,itstr):
 
 def create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution):
     if Lambda_max is None:
-        paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.1f_s=%s%s%s'%(N,pixsize,B0,xistr,eta,sourcename,itstr,beamstr)
+        paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.2f_s=%s%s%s'%(N,pixsize,B0,xistr,eta,sourcename,itstr,beamstr)
     else:
-        paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.1f_s=%s_Lmax=%i%s%s'%(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr)
+        paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.2f_s=%s_Lmax=%i%s%s'%(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr)
     if redshift_dilution:
         paramstring += '_zd'
     return paramstring
@@ -863,6 +863,12 @@ def params_for_testing():
     iteration = 0
     beamsize = 13.91483647
     recompute = False
+    savedir = "./tests/"
+    cz = 0.0058
+    ne0 = 0.0031
+    rc = 341
+    beta = 0.77
+    reffreq=1500
 
     cmd = 'python3 /net/lofar4/data1/osinga/phd/year1/PlanckESZ_RM/analysis/magneticfieldmodel_paper2.py -xi %.3f -N 1024 -eta %.4f -B0 1 -s %s -pixsize 3.0 -dtype 32 -garbagecollect True -iteration %i -beamsize %.2f'%(xi, eta, sourcename, iteration, beamsize)
     print(cmd)
@@ -928,6 +934,9 @@ if __name__ == '__main__':
     savedir = args['savedir']
     if savedir[-1] != "/":
         savedir += "/"
+    if not os.path.exists(savedir):
+        print("Creating output directory %s"%savedir)
+        os.mkdir(savedir)
 
     # Whether to save the normalised B field, RM images, etc (everything after normalising the B field)
     saveresults = True 

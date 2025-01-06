@@ -1151,19 +1151,19 @@ def params_for_testing():
     garbagecollect = True
     # doUPP = False
     # noXray = False
-    # redshift_dilution = True
+    redshift_dilution = True  # noqa: F841
     iteration = 0
     beamsize = 13.91483647
-    # recompute = False
-    savedir = "./tests/"
-    cz = 0.0058
-    ne0 = 0.0031
-    rc = 341
-    beta = 0.77
-    reffreq=1500
-    cz = 0.0221
-    reffreq = 944
-    testing = True
+    recompute = True  # noqa: F841
+    savedir = "./tests/"  # noqa: F841
+    cz = 0.0058   # noqa: F841
+    ne0 = 0.0031  # noqa: F841
+    rc = 341   # noqa: F841
+    beta = 0.77   # noqa: F841
+    reffreq=1500   # noqa: F841
+    cz = 0.0221   # noqa: F841
+    reffreq = 944   # noqa: F841
+    testing = True   # noqa: F841
 
     cmd = f"python3 magneticfieldmodel.py -testing {testing} -N {N:.0f} -xi {xi:.3f} -eta {eta:.4f} -B0 {B0:.1f} -s {sourcename} -pixsize {pixsize:.0f} -dtype {dtype:.0f} -garbagecollect {garbagecollect} -iteration {iteration:.0f} -beamsize {beamsize:.2f} -cz {cz:.4f} -reffreq {reffreq:.0f} -lmax {Lambda_max} "
     print(cmd)
@@ -1319,8 +1319,8 @@ if __name__ == '__main__':
     #Observed wavelength of radiation in meters
     wavelength = (speed_of_light/(reffreq*u.MHz)).to(u.m).value  
 
+    status = check_results_already_computed()
     if not recompute:
-        status = check_results_already_computed()
         if status == 'fully computed':
             dtime = time.time()-starttime
             print ("Script fully finished. Took %.1f seconds to check results"%(dtime))

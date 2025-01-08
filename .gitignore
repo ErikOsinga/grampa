@@ -48,7 +48,7 @@ coverage.xml
 .pytest_cache/
 
 # Test directory
-tests/
+#tests/
 
 # Translations
 *.mo

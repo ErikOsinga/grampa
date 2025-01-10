@@ -8,8 +8,7 @@ from astropy.cosmology import FlatLambdaCDM
 import astropy.units as u
 from astropy.constants import c as speed_of_light
 
-# from scipy.optimize import curve_fit
-from scipy import stats
+from scipy.optimize import curve_fit
 
 import argparse
 import matplotlib.pyplot as plt
@@ -20,29 +19,41 @@ import multiprocessing as mp
 import gc 
 
 import psutil
+import pyFC
+from functools import partial
+from scipy.interpolate import interp1d
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
-"""
-# Simulate a magnetic field following Murgia+2004; https://arxiv.org/abs/astro-ph/0406225
-# approach is first mentioned in Tribble+1991.
 
-
-### ASSUMES SPHERICAL SYMMETRY IN THE ELECTRON DENSITY AND MAGNETIC FIELD PROFILE. Try to also use smaller dtypes. 
-
-"""
 
 ### TODO
 # import xray_surface_brightness
 # import SZ_profile
-# worth looking into DASK for chunking large array multiplications in memory
-# (e.g. https://docs.dask.org/en/stable/generated/dask.array.dot.html)
+
+
 
 starttime = time.time()
 print ("\n\nScript is starting..")
 
 pid = os.getpid()
 python_process = psutil.Process(pid)
+
+
+"""
+# Simulate a magnetic field following Murgia+2004; https://arxiv.org/abs/astro-ph/0406225
+# approach is first mentioned in Tribble+1991.
+
+
+### ALICE VERSION: USE SYMMETRY. Try to also use smaller dtypes. 
+
+"""
+
+
+
+
+
+
 
 def print_field(field,i,j,k):
     """ Convenience function """
@@ -134,23 +145,6 @@ def kvector_lengthonly(N):
 
     return k_length
 
-def kvector_lengthonly_2D(N):
-    """
-    Get the normalised length of the fft indices in 2D (e.g. for the RM field)
-
-    Only half of the cube is generated. Other half is redundant for a real field
-    """
-
-    kxky = np.zeros((N,N//2+1,2),dtype=ftype)
-    indices = fftIndgen(N)
-    ky, kx = np.meshgrid(indices,indices)
-    kxky[:,:,0] = kx[:,:N//2+1] # only half of the 3rd axis
-    kxky[:,:,1] = ky[:,:N//2+1] # only half of the 3rd axis
-    # Power spectrum only depends on the length
-    k_length = np.linalg.norm(kxky,axis=-1)
-
-    return k_length
-
 def xvector(N,ndim,pixsize=1.0, subcube=False):
     """
     Generate NxN(xN)xndim matrix of x vector values
@@ -237,87 +231,6 @@ def cube_from_subcube(subcube, cubeshape):
 
     return cube
 
-def normalise_Bfield_subcube(B_field, average_profile, B0, ne_3d_subcube, ne0, eta):
-    """
-    Subfunction of def normalise_Bfield(): compute without the need of expanding ne_3d to a full cube.
-
-    B_field         -- Magnetic field at every point in the 3D space. shape (N,N,N,3)
-                                                            i.e. ~100 GB for N=2048
-    ne_3d_subcube   -- electron density subcube at every point in the 3D space. shape (N//2+1, N//2+1, N//2+1)
-    ne0             -- electron density in the center of the cluster
-    eta             -- Proportionality of B to n_e
-    B0              -- Mean magnetic field in center
-    """
-    N = len(B_field)
-    B_field_norm = np.zeros_like(B_field, dtype=np.float32)
-
-    # Calculate normalized B_field for the subcube and replicate to full cube
-    # All 'negative' axis directions
-    B_field_norm[:N//2-1, :N//2-1, :N//2-1] = (
-        B_field[:N//2-1, :N//2-1, :N//2-1]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[1:N//2, 1:N//2, 1:N//2] / ne0), eta)[..., None]
-    )
-
-    # 'Positive' x direction, negative others
-    B_field_norm[N//2-1:, :N//2-1, :N//2-1] = (
-        B_field[N//2-1:, :N//2-1, :N//2-1]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[0:, 1:N//2, 1:N//2] / ne0, axis=(1, 2)), eta)[..., None]
-    )
-
-    # 'Positive' y direction, negative others
-    B_field_norm[:N//2-1, N//2-1:, :N//2-1] = (
-        B_field[:N//2-1, N//2-1:, :N//2-1]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[1:N//2, 0:, 1:N//2] / ne0, axis=(0, 2)), eta)[..., None]
-    )
-
-    # 'Positive' z direction, negative others
-    B_field_norm[:N//2-1, :N//2-1, N//2-1:] = (
-        B_field[:N//2-1, :N//2-1, N//2-1:]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[1:N//2, 1:N//2, 0:] / ne0, axis=(0, 1)), eta)[..., None]
-    )
-
-    # Positive x, positive y, negative z
-    B_field_norm[N//2-1:, N//2-1:, :N//2-1] = (
-        B_field[N//2-1:, N//2-1:, :N//2-1]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[0:, 0:, 1:N//2] / ne0, axis=(2)), eta)[..., None]
-    )
-
-    # Positive x, negative y, positive z
-    B_field_norm[N//2-1:, :N//2-1, N//2-1:] = (
-        B_field[N//2-1:, :N//2-1, N//2-1:]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[0:, 1:N//2, 0:] / ne0, axis=(1)), eta)[..., None]
-    )
-
-    # Negative x, positive y, positive z
-    B_field_norm[:N//2-1, N//2-1:, N//2-1:] = (
-        B_field[:N//2-1, N//2-1:, N//2-1:]
-        / average_profile
-        * B0
-        * np.power(np.flip(ne_3d_subcube[1:N//2, 0:, 0:] / ne0, axis=(0)), eta)[..., None]
-    )
-
-    # All positive
-    B_field_norm[N//2-1:, N//2-1:, N//2-1:] = (
-        B_field[N//2-1:, N//2-1:, N//2-1:]
-        / average_profile
-        * B0
-        * np.power(ne_3d_subcube[0:, 0:, 0:] / ne0, eta)[..., None]
-    )
-
-    return B_field_norm
-
 def radial_profile(data, center):
     """
     Calculate radial profile of array 'data', given the center 'center'
@@ -399,7 +312,7 @@ def field3D(N, model, randgauss, counter=0, pixsize=1):
     # All random numbers we will ever need
     A_k = A_k_array(N, model, randgauss, counter, pixsize)
     # One step in k
-    dk = 2*np.pi/N/pixsize  # noqa: F841
+    dk = 2*np.pi/N/pixsize
     # The fourier frequencies are different for (un)even N
     Neven = N%2 # add one to loops if N is uneven
     
@@ -448,7 +361,7 @@ def field3D(N, model, randgauss, counter=0, pixsize=1):
             fftfield[0,N//2,z] = A_k[0,N//2,z]
             # The other half is complex conjugate
             fftfield[0,N//2,-z] = fftfield[0,N//2,z].real - 1j*fftfield[0,N//2,z].imag
-            
+            SYMMETRY
             # SAME FOR WHEN y=0, also do the x=N//2 column  
             fftfield[N//2,0,z] = A_k[N//2,0,z]
             # The other half is complex conjugate
@@ -522,6 +435,57 @@ def gaussian_random_field3D(N, Pk, k_length=None):
     
     field = noise * amplitude
     return field
+
+# Redefining the electron density model to follow the mean n_e profile
+
+def ne_mean(r, r500):
+        # Using the mean ne_profile
+        r_mean  = np.load('mean_ne_profile.npy')[0] * r500
+        mean_dens = np.load('mean_ne_profile.npy')[1]
+        f = interp1d(r_mean, np.log10(mean_dens), kind='cubic', fill_value='extrapolate')
+        return np.power(10,f(r))
+
+def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, mean = True, r500 = 925):
+    '''
+    The maximum scale is defined as the magnetic field reversal scale,
+    see footnote in Murgia+2004. In this way, Lambda = 0.5* 2*np.pi/k 
+    Thus the smallest possible k mode (k=1) always corresponds to Lambda=(N*pixsize)/2
+    e.g., Lambda_max = 512 kpc for N=1024 and p=1
+    Thus the next k mode (k=2) corresponds to 256 kpc and k=2 to 128 kpc etc..
+    Parameters
+    ----------
+    indices -- boolean -- whether 'k' (the 'k-modes') are given as indices or as values
+
+    mu -- float -- determines the multiplicative factor for the mean in the lognormal distribution 
+    s -- float -- determines the multiplicative factor for the sigma in the lognormal distribution
+
+    Returns
+    ---------
+    ne_fluct -- (N, N, N) numpy array -- lognormal fluctuations of the electron density
+    '''
+    xvec_length = xvector_length(N, 3, pixsize, subcube = False)
+    if Lambda_max is not None:
+        if indices:
+            kmin = (N*pixsize/2) / Lambda_max
+        else: # Mask all k modes that are smaller than kmax, corresponds to larger than Lambda_max
+            kmin = np.pi/Lambda_max
+    else: 
+        kmin = 1
+    if Lambda_min is not None:
+        if indices:
+            kmax = (N*pixsize/2) / Lambda_min
+        else: # Mask all k modes that are larger than kmin, corresponds to smaller than Lambda_min
+            kmax =  np.pi/Lambda_min
+    else:
+        kmax = N
+    if mean:
+        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu * np.mean(ne_mean(xvec_length, r500)), sigma= s *np.mean(ne_mean(xvec_length, r500)), beta=-(xi -2))
+    else: 
+        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu * np.mean(ne_beta(xvec_length)), sigma= s *np.mean(ne_beta(xvec_length)), beta=-(xi -2))
+    fc.gen_cube()
+
+    ne_fluct = fc.cube
+    return ne_fluct
 
 def magnetic_field_crossproduct(kvec, field):
     """
@@ -633,7 +597,24 @@ def polynomial(x, A, B, C):
     '''
     return A * x ** 2  + B * x + C
 
-def normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube=False):
+def poly(x, a, b, c, d, e, f):
+    return a * x**5 + b*x**4 + c*x**3 + d * x**2 + e*x + f
+def normalise_ne_field(ne_fluct, xvec_length, mean = True, r500 = 925):
+    '''
+    Function to normalize the ne field such that it follows the mean_ne profile
+    '''
+    average_profile = np.full((N, N, N), np.mean(ne_fluct))
+    c = N//2 - 1
+    if mean == True:
+        ne_3d = ne_fluct/average_profile.reshape(N,N,N) * ne_mean(xvec_length, r500).reshape(N, N, N)
+        ne_3d[c,c,c] = ne_mean(0, r500) # Electron density in center of cluster
+    else: 
+        ne_3d = ne_fluct/average_profile.reshape(N,N,N) * ne_beta(xvec_length).reshape(N, N, N)
+        ne_3d[c, c,c ] = ne_beta(0)
+    
+    return ne_3d
+
+def normalise_Bfield(ne_3d, ne0, B_field, eta, B0, xvec_length, subcube=False):
     """
     Normalise the B field such that it follows the electron density profile
 
@@ -642,28 +623,21 @@ def normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube=False):
     B_field -- Magnetic field at every point in the 3D space. shape (N,N,N,3)
     eta     -- Proportionality of B to n_e
     B0      -- Mean magnetic field in center
+    xvec_length -- vector defining the radius wrt the center of the image in (N,N,N)
     subcube -- Because its symmetric, only need a small part of cube (only positive quadrant)
 
     """
+    B_field_amplitude = np.linalg.norm(B_field[:,:,N//2-1,:],axis=2)
+    average_profile = np.full((N, N, N), np.mean(B_field_amplitude))
 
-    # Compute the radial profile of the central slice (symmetric, and should be flat)
-    # Can simply use np.mean(B_field_amplitude) instead of radial profile
-    B_field_amplitude = np.linalg.norm(B_field[:,:,N//2-1,:],axis=2) # (N,N)
-    average_profile = np.mean(B_field_amplitude) # Bfield should have no radial dependence yet
-                                                 # Just some random normalisation
-    
     if subcube:
         # make the full cubes for the normalisation of the B field
         # Expand 1/8th of the cube to the full cube. 
-        
-        # ne_3d = cube_from_subcube(ne_3d, N)
-        B_field_norm = normalise_Bfield_subcube(B_field, average_profile, B0, ne_3d, ne0, eta)
+        ne_3d = cube_from_subcube(ne_3d, N)
+        average_profile = cube_from_subcube(average_profile, N)
 
-    else:
-        # Normalise the B field to mean 1*B0 and then multiply by the normalised profile
-        # B_field_norm = B_field/average_profile.reshape(N,N,N,1)* B0 * (np.power(ne_3d / ne0, eta)).reshape(N,N,N,1)
-        B_field_norm = B_field/average_profile * B0 * (np.power(ne_3d / ne0, eta))[:,:,:,None]
-        
+    # Normalise the B field to mean 1*B0 and then multiply by the normalised profile
+    B_field_norm = B_field/average_profile.reshape(N,N,N,1)* B0 * (np.power(ne_3d / ne0, eta)).reshape(N,N,N,1)
     # Special case, central point
     c = N//2-1
     # Make sure B field is B0 muGauss in center
@@ -932,234 +906,28 @@ def computeRMimage_from_file():
 
     return RMimage, RMimage_half, RMconvolved, RMhalfconvolved
 
-def shell_averaged_power_spectrum(field, component='total', multiply_volume=False):
-    """
-    # Assuming the input cube 'field' is the Fourier field with dimensions e.g. (512, 512, 256, 3)
-    # so it has to be conjugate symmetric. 
-    # assuming it's not FFT shifted, so kx=0 is at index=0 instead of the centre
-    """
-    nx, ny, nz, _ = field.shape
-
-    if component == 'total':
-        # Compute the squared magnitude of the field strength (i.e. |Bx,By,Bz| )
-        power_spectrum = np.linalg.norm(np.abs(field)**2, axis=-1)  # shape (512, 512, 256)
-    elif component == 'x':
-        # Compute the squared magnitude of the Bx component only
-        power_spectrum = (np.abs(field[:,:,:,0])**2)  # shape (512, 512, 256)
-    elif component == 'y':
-        # Compute the squared magnitude of the By component only
-        power_spectrum = (np.abs(field[:,:,:,1])**2)  # shape (512, 512, 256)        
-    elif component == 'z':
-        # Compute the squared magnitude of the Bz component only
-        power_spectrum = (np.abs(field[:,:,:,2])**2)  # shape (512, 512, 256)        
-
-    # Create the wavenumber grid (half of the cube)
-    k_magnitude = kvector_lengthonly(nx) # assumes nx=ny=nz
-
-    # Flatten the k_magnitude and power_spectrum arrays
-    k_magnitude = k_magnitude.ravel()
-    power_spectrum = power_spectrum.ravel()
-
-    # Define the bins for shell averaging
-    k_max = nx//2+1 # only have good sampling in k up to nx//2
-                    # although k_max is technically sqrt(Ndim)*nx//2
-                    # then we would be sampling outside the image because the 'circle' is too large
-    k_bins = np.arange(0.5, k_max + 1.5, 1.0)
-    # Compute the corresponding k values for the shell-averaged power spectrum
-    k_values = 0.5 * (k_bins[1:] + k_bins[:-1])
-
-    # Bin the power spectrum values based on the wavenumber magnitude
-    Abins, _, _ = stats.binned_statistic(k_magnitude, power_spectrum,
-                                         statistic = "mean", # statistic = sum
-                                         bins = k_bins)
-
-    # Multiply by the volume to go from 3D to 1D power spectrum
-    if multiply_volume:
-        # if 2D field (see below)
-        # Abins *= np.pi * (k_bins[1:]**2 - k_bins[:-1]**2)  # in 2D volume (area) is pi r^2
-        
-        # if 3D field (default)
-        Abins *= 4. * np.pi / 3. * (k_bins[1:]**3 - k_bins[:-1]**3)  # in 3D volume is 4/3 pi r^3
-
-    return k_values, Abins
-
-def shell_averaged_power_spectrum2D(field, multiply_volume=False):
-    """
-    # Assuming the input cube 'field' is the Fourier field with dimensions e.g. (512, 256)
-    # so it has to be conjugate symmetric. 
-    # assuming it's not FFT shifted, so kx=0 is at index=0 instead of the centre
-    """
-    nx, ny = field.shape
-
-    # Compute the squared magnitude 
-    power_spectrum = np.abs(field)**2  # shape (512, 256)
-
-    # Create the wavenumber grid (half of the cube)
-    k_magnitude = kvector_lengthonly_2D(nx) # assumes nx=ny=nz
-
-    # Flatten the k_magnitude and power_spectrum arrays
-    k_magnitude = k_magnitude.ravel()
-    power_spectrum = power_spectrum.ravel()
-
-    # Define the bins for shell averaging
-    k_max = nx//2+1 # only have good sampling in k up to nx//2
-                    # although k_max is technically sqrt(Ndim)*nx//2
-                    # then we would be sampling outside the image because the 'circle' is too large
-    k_bins = np.arange(0.5, k_max + 1.5, 1.0)
-    # Compute the corresponding k values for the shell-averaged power spectrum
-    k_values = 0.5 * (k_bins[1:] + k_bins[:-1])
-
-    # Bin the power spectrum values based on the wavenumber magnitude
-    Abins, _, _ = stats.binned_statistic(k_magnitude, power_spectrum,
-                                         statistic = "mean", # statistic = sum
-                                         bins = k_bins)
-
-    # Multiply by the volume to go from 2D to 1D power spectrum
-    if multiply_volume:
-        # if 2D field
-        Abins *= np.pi * (k_bins[1:]**2 - k_bins[:-1]**2)  # in 2D volume (area) is pi r^2
-        
-        # if 3D field (see function above)
-        # Abins *= 4. * np.pi / 3. * (k_bins[1:]**3 - k_bins[:-1]**3)  # in 3D volume is 4/3 pi r^3
-
-    return k_values, Abins
-
-def compute_divergence(vector_field, dx=1.0, dy=1.0, dz=1.0):
-    """
-    Compute the divergence of a 3D vector field.
-    
-    Parameters:
-    - vector_field: numpy.ndarray
-        A 4D NumPy array of shape (nx, ny, nz, 3) representing the vector field.
-        The last dimension contains the (F_x, F_y, F_z) components.
-    - dx: float or numpy.ndarray, optional
-        Grid spacing along the x-axis. Can be a scalar or a 1D array of length nx.
-    - dy: float or numpy.ndarray, optional
-        Grid spacing along the y-axis. Can be a scalar or a 1D array of length ny.
-    - dz: float or numpy.ndarray, optional
-        Grid spacing along the z-axis. Can be a scalar or a 1D array of length nz.
-    
-    Returns:
-    - divergence: numpy.ndarray
-        A 3D NumPy array of shape (nx, ny, nz) containing the divergence at each grid point.
-    """
-    # Ensure the input is a NumPy array
-    vector_field = np.asarray(vector_field)
-    
-    # Check the shape of the input array
-    if vector_field.ndim != 4 or vector_field.shape[-1] != 3:
-        raise ValueError("vector_field must be a 4D array with shape (nx, ny, nz, 3)")
-    
-    # Extract vector components
-    F_x = vector_field[..., 0]
-    F_y = vector_field[..., 1]
-    F_z = vector_field[..., 2]
-    
-    # Compute partial derivatives
-    dFxdx = np.gradient(F_x, dx, axis=0)
-    dFydy = np.gradient(F_y, dy, axis=1)
-    dFzdz = np.gradient(F_z, dz, axis=2)
-    
-    # Calculate divergence
-    divergence = dFxdx + dFydy + dFzdz
-    
-    return divergence
-
-def plot_Bfield_amp_vs_radius(B_field_norm):
-    """
-    Plots only made when --testing is enabled
-    """
-    # Calculate the amplitude of the B field
-    B_field_amplitude = np.linalg.norm(B_field_norm,axis=3)
-    plt.imshow(B_field_amplitude[:,:,N//2])
-    plt.title("Normalised B field amplitude, central slice")
-    plt.colorbar()
-    plt.show()
-
-    # Plot the profile of the central slice
-    all_r, profile = radial_profile(B_field_amplitude[:,:,N//2-1], center=[N//2-1,N//2-1])
-    all_r *= np.int32(pixsize)
-    fig, ax = plt.subplots(figsize=(8,8))
-    plt.plot(all_r,profile,label='Magnetic field simulated',marker='o',markersize=2)
-    # Compare with density profile
-    density = beta_model(all_r)
-    plt.plot(all_r,((density/density[0])**0.5)*B0,label='Density profile $^{0.5}$')
-    plt.legend()
-    plt.show()
-
-def plot_B_field_powerspectrum(B_field_norm):
-    """
-    Plots only made when --testing is enabled
-    """
-    ## Use fft for real values. Try to avoid copying to save memory
-    run_fftw = pyfftw.builders.rfftn(B_field_norm
-        , auto_contiguous=False, auto_align_input=False, avoid_copy=True,threads=48, axes=(0,1,2))
-    B_field_norm_fft = run_fftw()
-    
-    k_values, Pk_values = shell_averaged_power_spectrum(B_field_norm_fft, component='total', multiply_volume=False)
-    plt.loglog(k_values, Pk_values, label='Data')
-    # Compare with expectation
-    amplitude = Pk_values[0]
-    alpha = xi-2
-    theoretical = amplitude*np.asarray(k_values,dtype='float')**-alpha * (k_values[0]**alpha)
-    plt.plot(k_values, theoretical,label='Pk = %.e k**-%.1f'%(amplitude,alpha), ls='dashed')
-    plt.xlabel('$k$')
-    plt.ylabel("$P(k)$")
-    plt.legend()
-    plt.title(f"Power spectrum of normalised B-field. {Lambda_max=} kpc")
-    plt.tight_layout()
-    plt.show()
-
-def plot_RM_powerspectrum(RMimage):
-    """
-    Plots only made when --testing is enabled
-    """
-    ## Use fft for real values. Try to avoid copying to save memory
-    run_fftw = pyfftw.builders.rfftn(RMimage
-        , auto_contiguous=False, auto_align_input=False, avoid_copy=True,threads=48)
-    RMimage_fft = run_fftw()
-    k_values, Pk_values = shell_averaged_power_spectrum2D(RMimage_fft, multiply_volume=False)
-    plt.loglog(k_values, Pk_values, label='Data')
-    # Compare with expectation
-    amplitude = Pk_values[0]
-    alpha = xi-2
-    # According to Murgia+2004
-    theoretical = amplitude*np.asarray(k_values,dtype='float')**-alpha * (k_values[0]**alpha)
-    plt.plot(k_values, theoretical,label='Pk = %.e k**-%.1f'%(amplitude,alpha), ls='dashed')
-    # According to Seta+2022 for a constant electron density and magnetic field strength
-    theoretical2 = amplitude*np.asarray(k_values,dtype='float')**(-alpha-1) * (k_values[0]**(alpha+1))
-    plt.plot(k_values, theoretical2,label='Pk = %.e k**-%.1f'%(amplitude,alpha+1), ls='dashed')
-    plt.xlabel('$k$')
-    plt.ylabel("$P(k)$")
-    plt.legend()
-    plt.title(f"Power spectrum of RM image. {Lambda_max=}")
-    plt.tight_layout()
-    plt.show()    
-
 def params_for_testing():
     """
     Function that does nothing. Only used for debugging.
     """
     xi = 4
-    N = 512
+    N = 1024
     eta = 0.5
     B0 = 5
     sourcename = 'G115.16-72.09'
-    Lambda_max = 100 # kpc
+    Lambda_max = None
     pixsize = 3
     dtype = 32
     garbagecollect = True
-    # doUPP = False
-    # noXray = False
-    # redshift_dilution = True
+    alice = False
+    doUPP = False
+    noXray = False
+    redshift_dilution = True
     iteration = 0
     beamsize = 13.91483647
-    # recompute = False
-    cz = 0.0221
-    reffreq = 944
-    testing = True
+    recompute = False
 
-    cmd = f"python3 magneticfieldmodel.py -testing {testing} -N {N:.0f} -xi {xi:.3f} -eta {eta:.4f} -B0 {B0:.1f} -s {sourcename} -pixsize {pixsize:.0f} -dtype {dtype:.0f} -garbagecollect {garbagecollect} -iteration {iteration:.0f} -beamsize {beamsize:.2f} -cz {cz:.4f} -reffreq {reffreq:.0f} -lmax {Lambda_max} "
+    cmd = 'python3 /net/lofar4/data1/osinga/phd/year1/PlanckESZ_RM/analysis/magneticfieldmodel_paper2.py -xi %.3f -N 1024 -eta %.4f -B0 1 -s %s -pixsize 3.0 -dtype 32 -garbagecollect True -iteration %i -beamsize %.2f'%(xi, eta, sourcename, iteration, beamsize)
     print(cmd)
     
     return
@@ -1176,32 +944,35 @@ if __name__ == '__main__':
 
     ###########
     parser = argparse.ArgumentParser(description='Create a magnetic field model with user specified parameters')
-    parser.add_argument('-s','--sourcename', help='Cluster name, for saving purposes', type=str, required=True)
-    parser.add_argument('-reffreq','--reffreq', help='Reference Frequency in MHz (i.e. center of the band)', type=float, required=True)
-    parser.add_argument('-cz','--cz', help='Cluster redshift', type=float, required=True)
+    parser.add_argument('-s','--sourcename', help='Cluster name, for saving purposes', type=str)
+    parser.add_argument('-reffreq','--reffreq', help='Reference Frequency in MHz (i.e. center of the band)', type=float)
+    parser.add_argument('-cz','--cz', help='Cluster redshift', type=float)
     parser.add_argument('-xi','--xi', help='Vector potential spectral index (= 2 + {Bfield power law spectral index}, default Kolmogorov )', type=float, default=5.67)
+    parser.add_argument('-mean', '--mean', help = 'Boolean that determines whether or not to use the mean n_e profile, default to True', type = bool, default = True)
+    parser.add_argument('-r500', '--r500', help = 'Cluster R500 in kpc, default to 925 kpc', type = float, default = 925)
     parser.add_argument('-N' ,'--N', help='Amount of pixels (default 512, power of 2 recommended)', type=int, default=512)
     parser.add_argument('-pixsize','--pixsize', help='Pixsize in kpc. Default 1 pix = 3 kpc.', default=3.0, type=float)
-    parser.add_argument('-eta','--eta', help='Exponent relating B field to electron density profile, default 0.5', type=float, default=0.5)
-    parser.add_argument('-B0','--B0', help='Central magnetic field strength in muG. Default 1.0', type=float, default=1.0)
+    parser.add_argument('-eta','--eta', help='Exponent relating B field to electron density profile', type=float)
+    parser.add_argument('-B0','--B0', help='Central magnetic field strength in muG', type=float)
     parser.add_argument('-lmax','--lambdamax', help='Maximum scale in kpc. Default None (i.e. max size of grid/2).', default=None, type=float)
     parser.add_argument('-dtype','--dtype', help='Float type to use 32 bit (default) or 64 bit', default=32, type=int)
     parser.add_argument('-garbagecollect','--garbagecollect', help='Let script manually free up memory (Default True)', default=True, type=bool)
     ## todo
     # parser.add_argument('-doUPP','--doUPP', help='If X-ray is not found, continue with UPP', default=False, type=bool)
-    parser.add_argument('-iteration' ,'--iteration', help='For saving different random initializations. Default 0', type=int, default=0)
-    parser.add_argument('-beamsize' ,'--beamsize', help='Image beam size in arcsec, for smoothing. Default 20asec', type=float, default=20.0)
-    parser.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. Default False', type=bool, default=False)
+    parser.add_argument('-iteration' ,'--iteration', help='For saving different random initializations', type=int, default=0)
+    parser.add_argument('-beamsize' ,'--beamsize', help='Image beam size in arcsec, for smoothing.', type=float, default=20.0)
+    parser.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists', type=bool, default=False)
     parser.add_argument('-ne0' ,'--ne0', help='Central electron density in beta model.', type=float, default=0.0031)
     parser.add_argument('-rc' ,'--rc', help='Core radius in kpc', type=float, default=341)
     parser.add_argument('-beta' ,'--beta', help='Beta power for beta model', type=float, default=0.77)
-    parser.add_argument('-testing','--testing', help='Produce validation plots. Default False', default=False, type=bool)
-    
-    
-    parser.add_argument('-savedir' ,'--savedir', help='Where to save results. Default ./', type=str, default="./")
+    parser.add_argument('-mu', '--mu', help = 'Mean of the fluctuations in the electron density', type = float, default = 1.0)
+    parser.add_argument('-sigma', '--sigma', help = 'Standard deviation of the fluctuations in the electron density', type = float, default = 0.2)
+    parser.add_argument('-savedir' ,'--savedir', help='Where to save results', type=str, default="./")
 
     args = vars(parser.parse_args())
 
+    mean = args['mean']
+    r500 = args['r500']
     xi = args['xi']
     N = args['N']
     eta = args['eta']
@@ -1211,6 +982,8 @@ if __name__ == '__main__':
     reffreq = args['reffreq']
     Lambda_max = args['lambdamax']
     pixsize = args['pixsize']
+    mu = args['mu']
+    sigma = args['sigma']
     dtype = args['dtype']
     garbagecollect = args['garbagecollect']
     # doUPP = args['doUPP'] ## TODO
@@ -1222,10 +995,12 @@ if __name__ == '__main__':
     ne0 = args['ne0']
     rc = args['rc']
     beta = args['beta']
-    testing = args['testing']
     savedir = args['savedir']
     if savedir[-1] != "/":
         savedir += "/"
+    if not os.path.exists(savedir):
+        print("Creating output directory %s"%savedir)
+        os.mkdir(savedir)
 
     # Whether to save the normalised B field, RM images, etc (everything after normalising the B field)
     saveresults = True 
@@ -1296,14 +1071,17 @@ if __name__ == '__main__':
     print (" Beam FWHM = %.1f kpc"%FWHM)
     print (" dtype= float%i"%dtype)
     print (" Manual garbagecollect= %s"%str(garbagecollect))
-    print (" ne0= %.2f"%(ne0))
-    print (" rc= %.2f"%(rc))
-    print (" beta= %.2f"%(beta))
-    print (" testing= %s"%(testing))
+    if mean:
+        print("r500 = %.2f"%(r500))
+    else:
+        print (" ne0= %.2f"%(ne0))
+        print (" rc= %.2f"%(rc))
+        print (" beta= %.2f"%(beta))
 
     # The electron density model (can replace by own model)
-    def ne_funct(r, ne0=ne0, rc=rc, beta=beta):
+    def ne_beta(r, ne0=ne0, rc=rc, beta=beta):
         return beta_model(r, ne0, rc, beta)
+
 
     # Randomly set an intrinsic polarisation angle (uniform)
     phi_intrinsic = 45*np.pi/180 # degrees to radians
@@ -1324,8 +1102,7 @@ if __name__ == '__main__':
         # Starting from Afield, Bfield or from scratch (if recompute=True)
     
         # Set indices=True if we are computing it the fast way, with the gaussian_random_field3D function
-        def Peff(k):
-            return model_xi(k, xi, N, Lambda_max, indices=True)
+        Peff = lambda k: model_xi(k, xi, N, Lambda_max, indices=True)
 
         # The files where the vector potential and B field are / will be saved
         vectorpotential_file, Bfield_file = BandAfieldfiles(N,pixsize,xistr,Lambda_max,itstr)
@@ -1367,7 +1144,7 @@ if __name__ == '__main__':
         if not already_computed: 
             print ("Saving fourier vector potential to %s, such that it can be used again"%vectorpotential_file)
             # Fourier vector potential only depends on number of pixels and assumed power law index
-            np.save(vectorpotential_file, field)
+            #np.save(vectorpotential_file, field)
 
         already_computed = False # Also check B field. Might not have been already computed
         if os.path.isfile(Bfield_file) and not recompute:
@@ -1420,34 +1197,34 @@ if __name__ == '__main__':
         if not already_computed: 
             print ("Saving unnormalised magnetic field to %s, such that it can be used again"%Bfield_file)
             # Magnetic field also depends on the pixel size assumed (since it affects K)
-            np.save(Bfield_file, B_field)
+            #np.save(Bfield_file, B_field)
 
         ## Using radial symmetry in a way where we can only use 1/8th of the cube
         ## we can calculate ne_3d about 6x faster for N=1024
-        subcube = True
-        multiprocessing = True
+        subcube = False
+        multiprocessing = False
 
         # Vector denoting the real space positions. The 0 point is in the middle.
         # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
         # The norm of the position vector
-        xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
+        xvec_length = xvector_length(N, 3, pixsize, subcube=False)
 
         # Let's test it with a random electron density profile 
         # sourcename = 'G021.09+33.25' # A2204. Cool-core cluster.  Figure 3 in Santos paper
         # sourcename = 'G282.49+65.17' # field with 25 polarised components
         # sourcename = 'G125.58-64.14' # A119
-
+        ne_fluct = gen_ne_fluct(xi = xi, Lambda_max=Lambda_max, indices=True, Lambda_min=None, mu = mu, s = sigma, mean = mean, r500 = r500)
+        
         if multiprocessing:
             print ("Normalising profile (multiprocessing) with electron density profile")
             pool = mp.Pool(processes=8)
-            ne_3d = np.asarray(pool.map(ne_funct, xvec_length))
+            f = partial(normalise_ne_field, ne_fluct, mean, r500)
+            ne_3d = np.asarray(pool.map(f, xvec_length))
             pool.close()
             pool.join()
         else:
             print ("Normalising profile with electron density profile")
-            ne_3d = ne_funct(xvec_length)
-
-        del xvec_length # We dont need xvec_length anymore
+            ne_3d = normalise_ne_field(ne_fluct, xvec_length, mean, r500)
 
         if subcube:
             c = 0 # then the center pixel is the first one, because the subcube is only the positive subset
@@ -1456,14 +1233,15 @@ if __name__ == '__main__':
             c = N//2-1
 
         # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
-        ne_3d[c,c,c] = ne_3d[c,c+1,c]
+        #ne_3d[c,c,c] = ne_3d[c,c+1,c] # This is not necessary for us at the moment 
         ne0 = ne_3d[c,c,c] # Electron density in center of cluster
 
         # Normalise the B field such that it follows the electron density profile ^eta
-        B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube)
+        B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, xvec_length, subcube)
         # memoryUse = python_process.memory_info()[0]/2.**30
         # print('Memory used: %.1f GB'%memoryUse)
         del B_field # We dont need B field unnormalised anymore 
+        del xvec_length # We dont need xvec_length anymore
         if garbagecollect: 
             timeg = time.time()
             print ("Deleted B_field and xvec_length. Collecting garbage..")
@@ -1472,21 +1250,12 @@ if __name__ == '__main__':
             print('Memory used: %.1f GB'%memoryUse)
             print ("Garbage collected in %i seconds"%(time.time()-timeg))
 
+
         # Calculate the B_field amplitude (length of the vector)
         # B_field_amplitude_nonorm = np.copy(B_field_amplitude)
         # B_field_amplitude = np.linalg.norm(B_field_norm,axis=3)
 
-        if testing:
-            print("Plotting normalised B-field amplitude")
-            plot_Bfield_amp_vs_radius(B_field_norm)
-            print("Plotting normalised B-field power spectrum")
-            plot_B_field_powerspectrum(B_field_norm)
-
         print ("Calculating rotation measure images.")
-        # now we need full 3D density cube
-        if subcube:
-            ne_3d = cube_from_subcube(ne_3d, N)
-
         # Calculate the RM by integrating over the 3rd axis
         RMimage = RM(ne_3d,B_field_norm,pixsize,axis=2)
         # Also integrate over half of the third axis. For in-cluster sources
@@ -1503,14 +1272,8 @@ if __name__ == '__main__':
     else:
         raise ValueError(f"Status is {status} and it is not implemented what to do with this.")
 
-
-    if testing:
-        print("Plotting RM images. Unconvolved & convolved")    
-        plotRMimage(RMimage, pixsize)
-        plotRMimage(RMconvolved, pixsize)
-        print("Plotting RM power spectrum")
-        plot_RM_powerspectrum(RMimage)
-        plot_RM_powerspectrum(RMconvolved)
+    # plotRMimage(RMimage, pixsize)
+    # plotRMimage(RMconvolved, pixsize)
 
     # Calculate observed polarisation angle, assuming a constant pol angle
     # and observing wavelength translated to the cluster redshift to account for redshift dilution
@@ -1577,6 +1340,7 @@ if __name__ == '__main__':
         np.save(savedir2+'RMimage_half_%s.npy'%paramstring, RMimage_half)
         np.save(savedir2+'RMconvolved_%s.npy'%paramstring, RMconvolved)
         np.save(savedir2+'RMhalfconvolved_%s.npy'%paramstring, RMhalfconvolved)
+        np.save(savedir2 + 'B_field_norm%s.npy'%paramstring, B_field_norm)
 
         np.save(savedir2+'Qconvolved_%s.npy'%paramstring, Qconvolved)
         np.save(savedir2+'Uconvolved_%s.npy'%paramstring, Uconvolved)

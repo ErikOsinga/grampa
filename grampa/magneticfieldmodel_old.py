@@ -932,13 +932,15 @@ def BandAfieldfiles(N,pixsize,xistr,Lambda_max,itstr):
         Bfield_file = savedir+'Bfield_N=%i_p=%i_%s_Lmax=%i%s.npy'%(N,pixsize,xistr,Lambda_max,itstr)
     return vectorpotential_file, Bfield_file
 
-def create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution):
+def create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution, fluctuate_ne):
     if Lambda_max is None:
         paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.2f_s=%s%s%s'%(N,pixsize,B0,xistr,eta,sourcename,itstr,beamstr)
     else:
         paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.2f_s=%s_Lmax=%i%s%s'%(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr)
     if redshift_dilution:
         paramstring += '_zd'
+    if fluctuate_ne:
+        paramstring += '_nefluct'
     return paramstring
 
 def check_results_already_computed():
@@ -955,13 +957,13 @@ def check_results_already_computed():
     savedir2 = savedir + 'after_normalise/%s/'%sourcename
 
     # First check if the result with the given B0 is already computed
-    paramstring = create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution)
+    paramstring = create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution, fluctuate_ne)
     if os.path.isfile(savedir2+'RMimage_%s.npy'%paramstring) and os.path.isfile(savedir2+'RMhalfconvolved_%s.npy'%paramstring):
         return 'fully computed'
     else:
         # Check if the result with B0=1 is already computed. We can use it
         # to compute the result with any other B0
-        paramstring = create_paramstring(N,pixsize,1,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution)
+        paramstring = create_paramstring(N,pixsize,1,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution, fluctuate_ne)
         if os.path.isfile(savedir2+'RMimage_%s.npy'%paramstring) and os.path.isfile(savedir2+'RMhalfconvolved_%s.npy'%paramstring):
             return 'partially computed'
         else:
@@ -974,7 +976,7 @@ def computeRMimage_from_file():
     """
     savedir2 = savedir + 'after_normalise/%s/'%sourcename
     # Load the B0=1 results
-    paramstring = create_paramstring(N,pixsize,1,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution)
+    paramstring = create_paramstring(N,pixsize,1,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution, fluctuate_ne)
     
     RMimage          = np.load(savedir2+'RMimage_%s.npy'%paramstring)
     RMimage_half     = np.load(savedir2+'RMimage_half_%s.npy'%paramstring)
@@ -1698,7 +1700,7 @@ if __name__ == '__main__':
         # np.save(savedir2+'Bfield_norm_N=%i_p=%i_B0=%.1f_xi=%i_s=%s.npy'%(N,pixsize,B0,xi,sourcename), B_field_norm)
 
         ### Update 18 oct: I had forgotten to put eta in the paramstring...
-        paramstring = create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution)
+        paramstring = create_paramstring(N,pixsize,B0,xistr,eta,sourcename,Lambda_max,itstr,beamstr,redshift_dilution, fluctuate_ne)
 
         # These images are only ~ 9 MB for N=1024 so thats fine.
         np.save(savedir2+'RMimage_%s.npy'%paramstring, RMimage)

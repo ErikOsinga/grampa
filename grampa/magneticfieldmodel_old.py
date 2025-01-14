@@ -8,7 +8,6 @@ from astropy.cosmology import FlatLambdaCDM
 import astropy.units as u
 from astropy.constants import c as speed_of_light
 
-# from scipy.optimize import curve_fit
 from scipy import stats
 
 import argparse
@@ -16,10 +15,11 @@ import matplotlib.pyplot as plt
 
 import time
 
-import multiprocessing as mp
 import gc 
 
 import psutil
+import pyFC
+from scipy.interpolate import interp1d
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
@@ -29,6 +29,8 @@ cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 # Code was developed for Osinga+22 and Osinga+24
 
 # ASSUMES SPHERICAL SYMMETRY IN THE ELECTRON DENSITY AND MAGNETIC FIELD PROFILE.
+
+# Update 2024-07-14: Affan Khadir added option for lognormal density fluctuations
 
 """
 
@@ -515,6 +517,62 @@ def gaussian_random_field3D(N, Pk, k_length=None):
     field = noise * amplitude
     return field
 
+def ne_mean(r, r500):
+    """Return inter/extra-polated profile of electron density using the mean profile from Osinga+2022
+    
+    input r in kpc and r500 in kpc
+
+    returns ne in cm^-3
+    """
+    r_mean  = np.load('../examples/mean_ne_profile.npy')[0] * r500
+    mean_dens = np.load('../examples/mean_ne_profile.npy')[1]
+    f = interp1d(r_mean, np.log10(mean_dens), kind='cubic', fill_value='extrapolate')
+    return np.power(10,f(r))
+
+def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, usemean_ne = True, r500 = 925):
+    """ Added by Affan Khadir
+
+    The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
+    
+    In this way, Lambda = 0.5* 2*np.pi/k. Thus the smallest possible k mode (k=1) 
+    always corresponds to Lambda=(N*pixsize)/2
+    e.g., Lambda_max = 512 kpc for N=1024 and p=1
+    Thus the next k mode (k=2) corresponds to 256 kpc and k=2 to 128 kpc etc..
+
+    Parameters
+    ----------
+    indices -- boolean -- whether 'k' (the 'k-modes') are given as indices or as values
+    mu      -- float   -- determines the multiplicative factor for the mean in the lognormal distribution 
+    s       -- float   -- determines the multiplicative factor for the sigma in the lognormal distribution
+    
+    Returns
+    ---------
+    ne_fluct -- (N, N, N) numpy array -- lognormal fluctuations of the electron density
+    """
+    xvec_length = xvector_length(N, 3, pixsize, subcube = False)
+    if Lambda_max is not None:
+        if indices:
+            kmin = (N*pixsize/2) / Lambda_max
+        else: # Mask all k modes that are smaller than kmax, corresponds to larger than Lambda_max
+            kmin = np.pi/Lambda_max
+    else: 
+        kmin = 1
+    if Lambda_min is not None:
+        if indices:
+            kmax = (N*pixsize/2) / Lambda_min
+        else: # Mask all k modes that are larger than kmin, corresponds to smaller than Lambda_min
+            kmax =  np.pi/Lambda_min
+    else:
+        kmax = N
+    if usemean_ne:
+        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu * np.mean(ne_mean(xvec_length, r500)), sigma= s *np.mean(ne_mean(xvec_length, r500)), beta=-(xi -2))
+    else: 
+        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu * np.mean(ne_funct(xvec_length)), sigma= s *np.mean(ne_funct(xvec_length)), beta=-(xi -2))
+    fc.gen_cube()
+
+    ne_fluct = fc.cube
+    return ne_fluct
+
 def magnetic_field_crossproduct(kvec, field):
     """
     Do the cross product of i*k and A(k), keeping in mind complex conjugate symmetries.
@@ -615,15 +673,22 @@ def magnetic_field_crossproduct(kvec, field):
     
     return fourier_B_field
 
-def polynomial(x, A, B, C):
-    '''
-    a second order polynomial function:
-    f(x,y) = A * x ** 2  + B * x ** 2 + C
-     
-    x       -- numpy array containing x coordinates
-    A, B, C -- coefficients
-    '''
-    return A * x ** 2  + B * x + C
+def normalise_ne_field(xvec_length, ne_fluct, usemean_ne = True, r500 = 925):
+    """
+    Function to normalize the ne field such that it follows the requested ne profile
+
+    Either the beta model (if usemean_ne=False) or the mean profile from Osinga+2022 (if usemean_ne=True)
+    """
+    average_profile = np.full((N, N, N), np.mean(ne_fluct))
+    c = N//2 - 1
+    if usemean_ne:
+        ne_3d = ne_fluct/average_profile.reshape(N,N,N) * ne_mean(xvec_length, r500)#.reshape(N, N, N)
+        ne_3d[c,c,c] = ne_mean(0, r500) # Electron density in center of cluster
+    else: 
+        ne_3d = ne_fluct/average_profile.reshape(N,N,N) * ne_funct(xvec_length)#.reshape(N, N, N)
+        ne_3d[c, c,c ] = ne_funct(0)
+
+    return ne_3d
 
 def normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube=False):
     """
@@ -1057,7 +1122,7 @@ def compute_divergence(vector_field, dx=1.0, dy=1.0, dz=1.0):
     
     return divergence
 
-def plot_Bfield_amp_vs_radius(B_field_norm):
+def plot_Bfield_amp_vs_radius(B_field_norm, usemean_ne=True, r500=None):
     """
     Plots only made when --testing is enabled
     """
@@ -1074,7 +1139,10 @@ def plot_Bfield_amp_vs_radius(B_field_norm):
     fig, ax = plt.subplots(figsize=(8,8))
     plt.plot(all_r,profile,label='Magnetic field simulated',marker='o',markersize=2)
     # Compare with density profile
-    density = beta_model(all_r)
+    if usemean_ne:
+        density = ne_mean(all_r, r500)
+    else:
+        density = beta_model(all_r)
     plt.plot(all_r,((density/density[0])**0.5)*B0,label='Density profile $^{0.5}$')
     plt.legend()
     plt.show()
@@ -1126,7 +1194,27 @@ def plot_RM_powerspectrum(RMimage):
     plt.legend()
     plt.title(f"Power spectrum of RM image. {Lambda_max=}")
     plt.tight_layout()
-    plt.show()    
+    plt.show()
+
+def plotdepolimage(Polintimage, pixsize):
+    """ Plot depol image"""
+    extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
+    plt.imshow(Polintimage,extent=extent,origin='lower')
+    cbar = plt.colorbar()
+    cbar.set_label("Depol [$p$/$p_0$]")
+    plt.xlabel('x [kpc]')
+    plt.ylabel('y [kpc]')
+    plt.show()
+
+def plot_ne(ne_3d, pixsize):
+    """ Plot electron density image"""
+    extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
+    plt.imshow(ne_3d[:,:,N//2],extent=extent,origin='lower')
+    cbar = plt.colorbar()
+    cbar.set_label("Electron density [cm$^{-3}$]")
+    plt.xlabel('x [kpc]')
+    plt.ylabel('y [kpc]')
+    plt.show()
 
 def params_for_testing(run_command=False):
     """
@@ -1147,7 +1235,7 @@ def params_for_testing(run_command=False):
     iteration = 0
     beamsize = 13.91483647
     recompute = True  # noqa: F841
-    savedir = "./tests/"  # noqa: F841
+    savedir = "../tests_local/"  # noqa: F841
     cz = 0.0058   # noqa: F841
     ne0 = 0.0031  # noqa: F841
     rc = 341   # noqa: F841
@@ -1156,9 +1244,14 @@ def params_for_testing(run_command=False):
     cz = 0.0221   # noqa: F841
     reffreq = 944   # noqa: F841
     testing = True   # noqa: F841
+    usemean_ne = True  # noqa: F841
+    r500 = 925  # noqa: F841
+    fluctuate_ne = True  # noqa: F841
+    mu_ne_fluct = 1.0   # noqa: F841
+    sigma_ne_fluct = 0.1   # noqa: F841
 
     print("Example command:")
-    cmd = f"python3 magneticfieldmodel.py -testing {testing} -N {N:.0f} -xi {xi:.3f} -eta {eta:.4f} -B0 {B0:.1f} -s {sourcename} -pixsize {pixsize:.0f} -dtype {dtype:.0f} -garbagecollect {garbagecollect} -iteration {iteration:.0f} -beamsize {beamsize:.2f} -cz {cz:.4f} -reffreq {reffreq:.0f} -lmax {Lambda_max} "
+    cmd = f"python3 magneticfieldmodel_old.py -testing {testing} -N {N:.0f} -xi {xi:.3f} -eta {eta:.4f} -B0 {B0:.1f} -s {sourcename} -pixsize {pixsize:.0f} -dtype {dtype:.0f} -garbagecollect {garbagecollect} -iteration {iteration:.0f} -beamsize {beamsize:.2f} -cz {cz:.4f} -reffreq {reffreq:.0f} -lmax {Lambda_max} -usemean_ne {usemean_ne} -r500 {r500} -fluctuate_ne {fluctuate_ne} -mu_ne_fluct {mu_ne_fluct} -sigma_ne_fluct {sigma_ne_fluct} -savedir {savedir} -recompute {recompute}"
     print(cmd)
 
     if run_command:
@@ -1171,7 +1264,7 @@ if __name__ == '__main__':
     print ("\n\nGRAMPA is starting a magnetic field model...")
 
     pid = os.getpid()
-    python_process = psutil.Process(pid)    
+    python_process = psutil.Process(pid)
 
     ########### Example parameters
     # # Power law -4 makes magnetic field -2 
@@ -1199,9 +1292,19 @@ if __name__ == '__main__':
     parser.add_argument('-iteration' ,'--iteration', help='For saving different random initializations. Default 0', type=int, default=0)
     parser.add_argument('-beamsize' ,'--beamsize', help='Image beam size in arcsec, for smoothing. Default 20asec', type=float, default=20.0)
     parser.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. Default False', type=bool, default=False)
-    parser.add_argument('-ne0' ,'--ne0', help='Central electron density in beta model.', type=float, default=0.0031)
-    parser.add_argument('-rc' ,'--rc', help='Core radius in kpc', type=float, default=341)
-    parser.add_argument('-beta' ,'--beta', help='Beta power for beta model', type=float, default=0.77)
+    
+    # Electron density parameters
+    parser.add_argument('-ne0' ,'--ne0', help='Central electron density in beta model. Ignored if usemean_ne=True', type=float, default=0.0031)
+    parser.add_argument('-rc' ,'--rc', help='Core radius in kpc. Ignored if usemean_ne=True', type=float, default=341)
+    parser.add_argument('-beta' ,'--beta', help='Beta power for beta model. Ignored if usemean_ne=True', type=float, default=0.77)
+    # If we want to use the mean ne profile from Osinga+22
+    parser.add_argument('-usemean_ne' ,'--usemean_ne', help='Whether to use the mean ne profile from Osinga+22. Default True', type=bool, default=True)
+    parser.add_argument('-r500', '--r500', help = 'Cluster R500 in kpc, used for scaling mean ne profile. Default to 925 kpc', type = float, default = 925)
+    # If we want to add fluctuations to the electron density
+    parser.add_argument('-fluctuate_ne' ,'--fluctuate_ne', help='Whether to add lognormal fluctuations to the electron density. Default False', type=bool, default=False)
+    parser.add_argument('-mu_ne_fluct', '--mu_ne_fluct', help = 'Mean of the fluctuations in the electron density', type = float, default = 1.0)
+    parser.add_argument('-sigma_ne_fluct', '--sigma_ne_fluct', help = 'Standard deviation of the fluctuations in the electron density', type = float, default = 0.2)    
+
     parser.add_argument('-testing','--testing', help='Produce validation plots. Default False', default=False, type=bool)
     
     parser.add_argument('-savedir' ,'--savedir', help='Where to save results. Default ./', type=str, default="./")
@@ -1229,7 +1332,12 @@ if __name__ == '__main__':
     ne0 = args['ne0']
     rc = args['rc']
     beta = args['beta']
+    usemean_ne = args['usemean_ne']
+    r500 = args['r500']
     testing = args['testing']
+    fluctuate_ne = args['fluctuate_ne']
+    mu_ne_fluct = args['mu_ne_fluct']
+    sigma_ne_fluct = args['sigma_ne_fluct']
     saveresults = args['saveresults']
     savedir = args['savedir']
     if savedir[-1] != "/":
@@ -1303,9 +1411,16 @@ if __name__ == '__main__':
     print (" Beam FWHM = %.1f kpc"%FWHM)
     print (" dtype= float%i"%dtype)
     print (" Manual garbagecollect= %s"%str(garbagecollect))
-    print (" ne0= %.2f"%(ne0))
-    print (" rc= %.2f"%(rc))
-    print (" beta= %.2f"%(beta))
+    if usemean_ne:
+        print("r500 = %.2f kpc"%(r500))
+    else:
+        print (" ne0= %.2f"%(ne0))
+        print (" rc= %.2f"%(rc))
+        print (" beta= %.2f"%(beta))
+    print(" Fluctuate ne = %s"%fluctuate_ne)
+    if fluctuate_ne:
+        print(" mu_ne_fluct = %.2f"%mu_ne_fluct)
+        print(" sigma_ne_fluct = %.2f"%sigma_ne_fluct)
     print (" testing= %s"%(testing))
 
     # The electron density model (can replace by own model)
@@ -1318,14 +1433,14 @@ if __name__ == '__main__':
     wavelength = (speed_of_light/(reffreq*u.MHz)).to(u.m).value  
 
     status = check_results_already_computed()
-    if not recompute:
+    if not recompute: # type: ignore
         if status == 'fully computed':
             dtime = time.time()-starttime
             print ("Script fully finished. Took %.1f seconds to check results"%(dtime))
             sys.exit("Results already computed and recompute=False, exiting.")
         # Otherwise status = partially computed or not computed, continue. 
 
-    if status == 'not computed' or recompute: 
+    if status == 'not computed' or recompute:  # type: ignore
         # We dont have the resulting RM image or user forces recompute, so compute it.
         
         # Starting from Afield, Bfield or from scratch (if recompute=True)
@@ -1339,7 +1454,7 @@ if __name__ == '__main__':
 
         # Boolean to track whether maybe we have computed unnormalised A or B field before
         already_computed = False
-        if os.path.isfile(vectorpotential_file) and not recompute:
+        if os.path.isfile(vectorpotential_file) and not recompute: # type: ignore
             already_computed = True
             print ("Found a saved version of the vector potential with user defined parameters:")
             print (" N=%i \n xi=%.2f Lmax=%s"%(N,xi,Lambda_max))
@@ -1377,7 +1492,7 @@ if __name__ == '__main__':
             np.save(vectorpotential_file, field)
 
         already_computed = False # Also check B field. Might not have been already computed
-        if os.path.isfile(Bfield_file) and not recompute:
+        if os.path.isfile(Bfield_file) and not recompute: # type: ignore
             already_computed = True
             print ("Found a saved version of the magnetic field with user defined parameters:")
             print (" N=%i \n xi=%.2f \n pixsize=%i Lmax=%s"%(N,xi,pixsize,Lambda_max))
@@ -1394,7 +1509,7 @@ if __name__ == '__main__':
             # memoryUse = python_process.memory_info()[0]/2.**30
             # print('Memory used: %.1f GB'%memoryUse)
             del kvec # Huge array which we dont need anymore 
-            if garbagecollect: 
+            if garbagecollect:  # type: ignore
                 timeg = time.time()
                 print ("Deleted kvec. Collecting garbage..")
                 gc.collect()
@@ -1411,7 +1526,7 @@ if __name__ == '__main__':
                 B_field = field # re-name it B-field for clarity
                 # memoryUse = python_process.memory_info()[0]/2.**30
                 # print('Memory used: %.1f GB'%memoryUse)
-                if garbagecollect: 
+                if garbagecollect: # type: ignore
                     timeg = time.time()
                     print ("Ran IFFT. Collecting garbage..")
                     gc.collect()
@@ -1432,26 +1547,22 @@ if __name__ == '__main__':
         ## Using radial symmetry in a way where we can only use 1/8th of the cube
         ## we can calculate ne_3d about 6x faster for N=1024
         subcube = True
-        multiprocessing = True
+
+        if fluctuate_ne:  # type: ignore
+            subcube = False # cannot be done with subcube
+            multiprocessing = False # crashes
 
         # Vector denoting the real space positions. The 0 point is in the middle.
         # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
         # The norm of the position vector
         xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
 
-        # Let's test it with a random electron density profile 
-        # sourcename = 'G021.09+33.25' # A2204. Cool-core cluster.  Figure 3 in Santos paper
-        # sourcename = 'G282.49+65.17' # field with 25 polarised components
-        # sourcename = 'G125.58-64.14' # A119
-
-        if multiprocessing:
-            print ("Normalising profile (multiprocessing) with electron density profile")
-            pool = mp.Pool(processes=8)
-            ne_3d = np.asarray(pool.map(ne_funct, xvec_length))
-            pool.close()
-            pool.join()
+        if fluctuate_ne:  # type: ignore
+            # Generate fluctuations in ne following the mean profile or the requested beta function
+            ne_fluct = gen_ne_fluct(xi = xi, Lambda_max=Lambda_max, indices=True, Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct, usemean_ne=usemean_ne, r500 = r500)
+            ne_3d = normalise_ne_field(xvec_length, ne_fluct, usemean_ne, r500)
         else:
-            print ("Normalising profile with electron density profile")
+            # Generate the electron density field without fluctuations
             ne_3d = ne_funct(xvec_length)
 
         del xvec_length # We dont need xvec_length anymore
@@ -1459,19 +1570,21 @@ if __name__ == '__main__':
         if subcube:
             c = 0 # then the center pixel is the first one, because the subcube is only the positive subset
         else:
-            # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
-            c = N//2-1
+            c = N//2-1 # Then this is the center pixel
 
-        # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
-        ne_3d[c,c,c] = ne_3d[c,c+1,c]
+        if not np.isfinite(ne_3d[c,c,c]):
+            # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
+            ne_3d[c,c,c] = ne_3d[c,c+1,c]
+        
         ne0 = ne_3d[c,c,c] # Electron density in center of cluster
 
         # Normalise the B field such that it follows the electron density profile ^eta
+        print ("Normalising magnetic field profile with electron density profile")
         B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube)
         # memoryUse = python_process.memory_info()[0]/2.**30
         # print('Memory used: %.1f GB'%memoryUse)
         del B_field # We dont need B field unnormalised anymore 
-        if garbagecollect: 
+        if garbagecollect:   # type: ignore
             timeg = time.time()
             print ("Deleted B_field and xvec_length. Collecting garbage..")
             gc.collect()
@@ -1483,11 +1596,15 @@ if __name__ == '__main__':
         # B_field_amplitude_nonorm = np.copy(B_field_amplitude)
         # B_field_amplitude = np.linalg.norm(B_field_norm,axis=3)
 
-        if testing:
+        if testing:  # type: ignore
             print("Plotting normalised B-field amplitude")
-            plot_Bfield_amp_vs_radius(B_field_norm)
+            plot_Bfield_amp_vs_radius(B_field_norm, usemean_ne, r500)
             print("Plotting normalised B-field power spectrum")
             plot_B_field_powerspectrum(B_field_norm)
+
+            if fluctuate_ne:  # type: ignore
+                print("Plotting ne fluctuations")
+                plot_ne(ne_3d, pixsize)
 
         print ("Calculating rotation measure images.")
         # now we need full 3D density cube
@@ -1517,6 +1634,7 @@ if __name__ == '__main__':
         plotRMimage(RMconvolved, pixsize)
         print("Plotting RM power spectrum")
         plot_RM_powerspectrum(RMimage)
+        print("Plotting RMconvolved power spectrum")
         plot_RM_powerspectrum(RMconvolved)
 
     # Calculate observed polarisation angle, assuming a constant pol angle
@@ -1551,6 +1669,9 @@ if __name__ == '__main__':
 
     polangle_inside = np.arctan2(Uflux_inside,Qflux_inside)*0.5
     Polint_inside = np.sqrt(Qflux_inside**2+Uflux_inside**2)
+
+    if testing:
+        plotdepolimage(Polint, pixsize)
 
     if status != 'partially computed':
         # Calculate the column density image if its never been done before.

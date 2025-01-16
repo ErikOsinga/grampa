@@ -529,7 +529,7 @@ def ne_mean(r, r500):
     f = interp1d(r_mean, np.log10(mean_dens), kind='cubic', fill_value='extrapolate')
     return np.power(10,f(r))
 
-def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, usemean_ne = True, r500 = 925):
+def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, r500 = 925):
     """ Added by Affan Khadir
 
     The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
@@ -549,7 +549,6 @@ def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s =
     ---------
     ne_fluct -- (N, N, N) numpy array -- lognormal fluctuations of the electron density
     """
-    xvec_length = xvector_length(N, 3, pixsize, subcube = False)
     if Lambda_max is not None:
         if indices:
             kmin = (N*pixsize/2) / Lambda_max
@@ -557,6 +556,7 @@ def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s =
             kmin = np.pi/Lambda_max
     else: 
         kmin = 1
+
     if Lambda_min is not None:
         if indices:
             kmax = (N*pixsize/2) / Lambda_min
@@ -564,13 +564,11 @@ def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s =
             kmax =  np.pi/Lambda_min
     else:
         kmax = N
-    if usemean_ne:
-        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu * np.mean(ne_mean(xvec_length, r500)), sigma= s *np.mean(ne_mean(xvec_length, r500)), beta=-(xi -2))
-    else: 
-        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu * np.mean(ne_funct(xvec_length)), sigma= s *np.mean(ne_funct(xvec_length)), beta=-(xi -2))
-    fc.gen_cube()
 
+    fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu, sigma= s, beta=-(xi -2))
+    fc.gen_cube()
     ne_fluct = fc.cube
+
     return ne_fluct
 
 def magnetic_field_crossproduct(kvec, field):
@@ -673,22 +671,123 @@ def magnetic_field_crossproduct(kvec, field):
     
     return fourier_B_field
 
-def normalise_ne_field(xvec_length, ne_fluct, usemean_ne = True, r500 = 925):
+def normalise_ne_field(xvec_length, ne_fluct, usemean_ne = True, r500 = 925, subcube=False):
     """
     Function to normalize the ne field such that it follows the requested ne profile
 
     Either the beta model (if usemean_ne=False) or the mean profile from Osinga+2022 (if usemean_ne=True)
     """
-    average_profile = np.full((N, N, N), np.mean(ne_fluct))
-    c = N//2 - 1
+    average_profile = np.mean(ne_fluct) # ne field should have no radial dependence yet
+                                        # Just some random normalisation
+    # c = N//2 - 1
+
     if usemean_ne:
-        ne_3d = ne_fluct/average_profile.reshape(N,N,N) * ne_mean(xvec_length, r500)#.reshape(N, N, N)
-        ne_3d[c,c,c] = ne_mean(0, r500) # Electron density in center of cluster
-    else: 
-        ne_3d = ne_fluct/average_profile.reshape(N,N,N) * ne_funct(xvec_length)#.reshape(N, N, N)
-        ne_3d[c, c,c ] = ne_funct(0)
+        ne_3d = ne_mean(xvec_length, r500)
+    else:
+        ne_3d = ne_funct(xvec_length)
+        
+    if not subcube: # generated full 3D electron density cube
+        ne_3d = ne_fluct/average_profile * ne_3d#.reshape(N, N, N)
+    else: # normalise with subcube (spherical electron density profile for normalisation)
+        normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d)
 
     return ne_3d
+
+def normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d_subcube):
+    """
+    Normalise the full electron-density fluctuation field (N x N x N) by 
+    only working with a subcube (N//2+1 x N//2+1 x N//2+1) and 
+    replicating/flipping it into all eight octants.
+
+    Parameters
+    ----------
+    ne_fluct : np.ndarray
+        Full 3D array of shape (N, N, N). The raw electron-density fluctuations.
+    average_profile : float
+        A normalization factor, typically the mean of ne_fluct.
+    ne_3d_subcube : np.ndarray
+        The radial electron-density subcube of shape (N//2+1, N//2+1, N//2+1),
+        representing the positive octant plus one extra cell in each dimension.
+
+    Returns
+    -------
+    ne_3d_norm : np.ndarray
+        The normalized electron-density cube of shape (N, N, N).
+    """
+
+    N = ne_fluct.shape[0]
+    expected_shape = (N//2 + 1, N//2 + 1, N//2 + 1)
+    assert ne_3d_subcube.shape == expected_shape, (
+        f"ne_3d_subcube must be of shape {expected_shape}, but got {ne_3d_subcube.shape}."
+    )
+    
+    ne_3d_norm = np.zeros_like(ne_fluct, dtype=np.float32)
+
+    # ---------------------------
+    # 1) All "negative" directions
+    # ---------------------------
+    ne_3d_norm[:N//2-1, :N//2-1, :N//2-1] = (
+        ne_fluct[:N//2-1, :N//2-1, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 1:N//2, 1:N//2], axis=(0, 1, 2))
+    )
+
+    # -----------------------------------------
+    # 2) Positive x, negative y, negative z
+    # -----------------------------------------
+    ne_3d_norm[N//2-1:, :N//2-1, :N//2-1] = (
+        ne_fluct[N//2-1:, :N//2-1, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[0:, 1:N//2, 1:N//2], axis=(1, 2))
+    )
+
+    # -----------------------------------------
+    # 3) Positive y, negative x, negative z
+    # -----------------------------------------
+    ne_3d_norm[:N//2-1, N//2-1:, :N//2-1] = (
+        ne_fluct[:N//2-1, N//2-1:, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 0:, 1:N//2], axis=(0, 2))
+    )
+
+    # -----------------------------------------
+    # 4) Positive z, negative x, negative y
+    # -----------------------------------------
+    ne_3d_norm[:N//2-1, :N//2-1, N//2-1:] = (
+        ne_fluct[:N//2-1, :N//2-1, N//2-1:] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 1:N//2, 0:], axis=(0, 1))
+    )
+
+    # -----------------------------------------
+    # 5) Positive x & y, negative z
+    # -----------------------------------------
+    ne_3d_norm[N//2-1:, N//2-1:, :N//2-1] = (
+        ne_fluct[N//2-1:, N//2-1:, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[0:, 0:, 1:N//2], axis=(2,))
+    )
+
+    # -----------------------------------------
+    # 6) Positive x & z, negative y
+    # -----------------------------------------
+    ne_3d_norm[N//2-1:, :N//2-1, N//2-1:] = (
+        ne_fluct[N//2-1:, :N//2-1, N//2-1:] / average_profile
+        * np.flip(ne_3d_subcube[0:, 1:N//2, 0:], axis=(1,))
+    )
+
+    # -----------------------------------------
+    # 7) Negative x, positive y & z
+    # -----------------------------------------
+    ne_3d_norm[:N//2-1, N//2-1:, N//2-1:] = (
+        ne_fluct[:N//2-1, N//2-1:, N//2-1:] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 0:, 0:], axis=(0,))
+    )
+
+    # ------------------
+    # 8) All "positive"
+    # ------------------
+    ne_3d_norm[N//2-1:, N//2-1:, N//2-1:] = (
+        ne_fluct[N//2-1:, N//2-1:, N//2-1:] / average_profile
+        * ne_3d_subcube[0:, 0:, 0:]
+    )
+
+    return ne_3d_norm
 
 def normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube=False):
     """
@@ -1548,22 +1647,30 @@ if __name__ == '__main__':
 
         ## Using radial symmetry in a way where we can only use 1/8th of the cube
         ## we can calculate ne_3d about 6x faster for N=1024
-        subcube = True
+        subcube = True ## can only be done for spherical electron density models
+
+        # if fluctuate_ne:  # type: ignore
+        #     subcube = False # cannot be done with subcube
 
         if fluctuate_ne:  # type: ignore
-            subcube = False # cannot be done with subcube
-            multiprocessing = False # crashes
-
-        # Vector denoting the real space positions. The 0 point is in the middle.
-        # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
-        # The norm of the position vector
-        xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
-
-        if fluctuate_ne:  # type: ignore
+            print("Generating ne cube with fluctuations")
             # Generate fluctuations in ne following the mean profile or the requested beta function
-            ne_fluct = gen_ne_fluct(xi = xi, Lambda_max=Lambda_max, indices=True, Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct, usemean_ne=usemean_ne, r500 = r500)
-            ne_3d = normalise_ne_field(xvec_length, ne_fluct, usemean_ne, r500)
+            ne_3d = gen_ne_fluct(xi = xi, Lambda_max=Lambda_max, indices=True
+                                , Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct
+                                , r500 = r500)
+
+            # Vector denoting the real space positions. The 0 point is in the middle.
+            # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
+            # The norm of the position vector
+            xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
+
+            print("Normalising ne cube to follow the mean profile of the requested beta function")
+            ne_3d = normalise_ne_field(xvec_length, ne_3d, usemean_ne, r500, subcube=subcube)
         else:
+            # Vector denoting the real space positions. The 0 point is in the middle.
+            # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
+            # The norm of the position vector            
+            xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
             # Generate the electron density field without fluctuations
             ne_3d = ne_funct(xvec_length)
 

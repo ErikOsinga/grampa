@@ -98,6 +98,7 @@ class MagneticFieldModel:
         self.saverawfields = args['saverawfields']
         self.saveresults = args['saveresults']
         self.frame = args['frame']
+        self.subcube_ne = args['subcube_ne']
         self.nthreads_fft = 48
         self.ne_funct = ne_funct
 
@@ -310,20 +311,19 @@ class MagneticFieldModel:
 
             ## Using radial symmetry in a way where we can only use 1/8th of the cube
             ## we can calculate ne_3d about 6x faster for N=1024
-            subcube = False # TODO, change when lognormal is implemented
-            self.logger.info(f"Using subcube symmetry to speed up calculations: {subcube}")
+            self.logger.info(f"Using subcube symmetry to speed up calculations: {self.subcube_ne}")
 
             # Vector denoting the real space positions. The 0 point is in the middle.
             # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
             # The norm of the position vector
-            xvec_length = mutils.xvector_length(self.N, 3, self.pixsize, self.ftype, subcube=subcube)
+            xvec_length = mutils.xvector_length(self.N, 3, self.pixsize, self.ftype, subcube=self.subcube_ne)
 
             # 3d cube of electron density
             ne_3d = self.ne_funct(xvec_length)
 
             del xvec_length # We dont need xvec_length anymore
 
-            if subcube:
+            if self.subcube_ne:
                 c = 0 # then the center pixel is the first one, because the subcube is only the positive subset
             else:
                 # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
@@ -334,7 +334,7 @@ class MagneticFieldModel:
             ne0 = ne_3d[c,c,c] # Electron density in center of cluster
 
             # Normalise the B field such that it follows the electron density profile ^eta
-            B_field_norm, ne_3d = mutils.normalise_Bfield(ne_3d, ne0, B_field, self.eta, self.B0, subcube)
+            B_field_norm, ne_3d = mutils.normalise_Bfield(ne_3d, ne0, B_field, self.eta, self.B0, self.subcube_ne)
             del B_field # We dont need B field unnormalised anymore
             if self.garbagecollect:
                 self.logger.info("Deleted B_field and xvec_length. Collecting garbage..")
@@ -357,7 +357,7 @@ class MagneticFieldModel:
 
             self.logger.info("Calculating rotation measure images.")
             # now we need full 3D density cube
-            if subcube:
+            if self.subcube_ne:
                 ne_3d = mutils.cube_from_subcube(ne_3d, self.N, self.ftype)
 
             # Calculate the RM by integrating over the 3rd axis
@@ -596,7 +596,8 @@ if __name__ == "__main__":
     computational_group = parser.add_argument_group('Computational Parameters')
     computational_group.add_argument('-dtype','--dtype', help='Bit type to use 32 bit (default) or 64 bit.', type=int, default=32)
     computational_group.add_argument('-garbagecollect','--garbagecollect', help='Let script manually free up memory in key places (default True).', type=bool, default=True)
-    computational_group.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. (Default False).', type=bool, default=False)
+    computational_group.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. (default False).', type=bool, default=False)
+    computational_group.add_argument('-subcube_ne' ,'--subcube_ne', help='Whether to assume electron density profile is spherically symmetrical and speed up calculations. (default True)', type=bool, default=True)
 
     # Output parameters group
     output_group = parser.add_argument_group('Output Parameters')

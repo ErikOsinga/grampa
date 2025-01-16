@@ -782,7 +782,7 @@ def plotdepolimage(Polintimage, pixsize, title=""):
     """ Plot depol image"""
     N = len(Polintimage)
     extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
-    plt.imshow(Polintimage,extent=extent,origin='lower')
+    plt.imshow(Polintimage,extent=extent,origin='lower',vmin=0.0,vmax=1.0)
     cbar = plt.colorbar()
     cbar.set_label("Depol [$p$/$p_0$]")
     plt.xlabel('x [kpc]')

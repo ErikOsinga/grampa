@@ -83,7 +83,7 @@ class MagneticFieldModel:
         self.eta = args['eta']
         self.B0 = args['B0']
         self.lambdamax = args['lambdamax'] # user input lambdamax, can be None
-        self.check_lambdamax() # convert lambdamax to a number in kpc if None
+        self.lambdamax = self.check_lambdamax(self.lambdamax) # convert lambdamax to a number in kpc if None
         self.dtype = args['dtype']
         self.check_ftype_ctype()
         self.garbagecollect = args['garbagecollect']
@@ -93,6 +93,11 @@ class MagneticFieldModel:
         self.ne0 = args['ne0']
         self.rc = args['rc']
         self.beta = args['beta']
+        self.fluctuate_ne = args['fluctuate_ne']
+        self.mu_ne_fluct = args['mu_ne_fluct']
+        self.sigma_ne_fluct = args['sigma_ne_fluct']
+        self.lambdamax_ne_fluct = args['lambdamax_ne_fluct']
+        self.lambdamax_ne_fluct = self.check_lambdamax(self.lambdamax_ne_fluct) # convert to a number in kpc if None
         self.testing = args['testing']
         self.savedir = args['savedir']
         self.saverawfields = args['saverawfields']
@@ -114,18 +119,18 @@ class MagneticFieldModel:
         # log parameters to file
         self.log_parameters()
 
-    def check_lambdamax(self):
-        if self.lambdamax is None:
+    def check_lambdamax(self, lambdamax):
+        if lambdamax is None:
             # Smallest possible k mode (k=1) corresponds to Lambda=(N*pixsize)/2, one reversal
-            self.lambdamax =(self.N*self.pixsize)/2
-        elif self.lambdamax > (self.N*self.pixsize)/2:
-            self.lambdamax =(self.N*self.pixsize)/2
+            lambdamax =(self.N*self.pixsize)/2
+        elif lambdamax > (self.N*self.pixsize)/2:
+            lambdamax =(self.N*self.pixsize)/2
             self.logger.warning(f"Warning: Input Lambda_max is larger than the maximum possible scale. Setting Lambda_max to maximum possible scale of {self.lambdamax} kpc.")
-        elif self.lambdamax < 0:
-            errormsg = f"Error: {self.lambdamax=} but it cannot be negative."
+        elif lambdamax < 0:
+            errormsg = f"Error: {lambdamax=} but it cannot be negative."
             self.logger.error(errormsg)
             raise ValueError(errormsg)
-        return
+        return lambdamax
     
     def check_savedir(self):
         """Check if savedir exists, if not create it"""
@@ -177,6 +182,9 @@ class MagneticFieldModel:
             errormsg = f"Error: {self.frame=} but it can only be 'observedframe' or 'clusterframe'."
             self.logger.error(errormsg)
             raise ValueError(errormsg)
+        if self.fluctuate_ne:
+            paramstring += f'_neLmax_{self.lambdamax_ne_fluct:.0f}'
+
         return paramstring
     
     def log_parameters(self):
@@ -185,18 +193,24 @@ class MagneticFieldModel:
         self.logger.info(f" N={self.N}")
         self.logger.info(f" eta={self.eta:.1f}")
         self.logger.info(f" B0={self.B0:.1f}")
-        self.logger.info(f" pixsize={self.pixsize:.1f}")
+        self.logger.info(f" pixsize={self.pixsize:.1f} kpc")
         self.logger.info(f" sourcename= {self.sourcename}")
         self.logger.info(f" cz= {self.cz:.2f}")
-        self.logger.info(f" Lambda_max= {self.lambdamax}")
+        self.logger.info(f" Lambda_max= {self.lambdamax} kpc")
         self.logger.info(f" Beam FWHM = {self.beamsize:.1f} arcsec")
         self.logger.info(f" Beam FWHM = {self.FWHM:.1f} kpc")
         self.logger.info(f" dtype= float{self.dtype}")
         self.logger.info(f" Manual garbagecollect= {self.garbagecollect}")
-        self.logger.info(f" ne0= {self.ne0:.2f}")
-        self.logger.info(f" rc= {self.rc:.2f}")
+        self.logger.info(f" ne0= {self.ne0:.2f} cm^-3")
+        self.logger.info(f" rc= {self.rc:.2f} kpc")
         self.logger.info(f" beta= {self.beta:.2f}")
         self.logger.info(f" testing= {self.testing}")
+        self.logger.info(f" Fluctuate ne = {self.fluctuate_ne}")
+        if self.fluctuate_ne:
+            if self.mu_ne_fluct != 1:
+                self.logger.info(f" mu_ne_fluct = {self.mu_ne_fluct:.2f}")
+            self.logger.info(f" sigma_ne_fluct = {self.sigma_ne_fluct:.2f}")
+            self.logger.info(f" ne fluct Lmax = {self.lambdamax_ne_fluct:.0f} kpc")
 
         self.logger.info(f" savedir= {self.savedir}")
         self.logger.info(f" paramstring= {self.paramstring}")
@@ -314,28 +328,41 @@ class MagneticFieldModel:
             self.logger.info(f"Using subcube symmetry to speed up calculations: {self.subcube_ne}")
 
             # Vector denoting the real space positions. The 0 point is in the middle.
-            # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True
-            # The norm of the position vector
+            # e.g. runs from -31 to +32 (for N=64). Or 0 to +32 when subcube=True and we use symmetry
+            # Then only take the norm of the position vector
             xvec_length = mutils.xvector_length(self.N, 3, self.pixsize, self.ftype, subcube=self.subcube_ne)
 
-            # 3d cube of electron density
-            ne_3d = self.ne_funct(xvec_length)
+            if self.fluctuate_ne:
+                self.logger.info("Generating ne cube with fluctuations")
+                # Generate lognormal fluctuations in ne with some standard deviation
+                ne_3d = mutils.gen_ne_fluct(self.xi, self.N, self.pixsize, self.mu_ne_fluct, self.sigma_ne_fluct, Lambda_max=self.lambdamax_ne_fluct, Lambda_min=None, indices=True)
+
+                self.logger.info("Normalising ne cube to follow the mean profile of the requested beta function")
+                ne_3d = mutils.normalise_ne_field(xvec_length, ne_3d, self.ne_funct, subcube=self.subcube_ne)
+                # ne_3d is now always of shape (N,N,N), regardless of whether subcube=True because of the spatial variations
+            
+            else:
+                # Generate the electron density field without fluctuations
+                ne_3d = self.ne_funct(xvec_length)
+                # ne_3d can now be (N//2+1,N//2+1,N//2+1), if subcube=True, because spherically symmetric
 
             del xvec_length # We dont need xvec_length anymore
 
-            if self.subcube_ne:
-                c = 0 # then the center pixel is the first one, because the subcube is only the positive subset
+            if self.subcube_ne and not self.fluctuate_ne:
+                c = 0 # then the center pixel of ne_3d is the first pixel, because the subcube is only the positive subset
+                subcube_for_B = True # can calculate B normalisation with the efficient function
             else:
-                # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
-                c = self.N//2-1
+                c = self.N//2-1 # then the center pixel is at N//2-1
+                subcube_for_B = False # cannot calculate B normalisation with the efficient function
 
-            # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
+            # Make sure n_e is not infinite in the center (in case diverging ne model at r=0). Just set it to the pixel next to it
             ne_3d[c,c,c] = ne_3d[c,c+1,c]
             ne0 = ne_3d[c,c,c] # Electron density in center of cluster
 
             # Normalise the B field such that it follows the electron density profile ^eta
-            B_field_norm, ne_3d = mutils.normalise_Bfield(ne_3d, ne0, B_field, self.eta, self.B0, self.subcube_ne)
-            del B_field # We dont need B field unnormalised anymore
+            B_field_norm, ne_3d = mutils.normalise_Bfield(ne_3d, ne0, B_field, self.eta, self.B0, subcube_for_B)
+
+            del B_field # We dont need B field unnormalised anymore, its quite big
             if self.garbagecollect:
                 self.logger.info("Deleted B_field and xvec_length. Collecting garbage..")
                 gc.collect()
@@ -356,9 +383,15 @@ class MagneticFieldModel:
                 mutils.plot_B_field_powerspectrum(B_field_norm, self.xi, self.lambdamax)
 
             self.logger.info("Calculating rotation measure images.")
-            # now we need full 3D density cube
-            if self.subcube_ne:
+            # now we make full 3D density cube anyway to calculate rotation measure image # TODO: could improve efficiency also here
+            if subcube_for_B:
                 ne_3d = mutils.cube_from_subcube(ne_3d, self.N, self.ftype)
+
+            if self.testing:
+                print(f"Plotting electron density image slice, shape {ne_3d.shape}")
+                mutils.plot_ne_image(ne_3d[:,:,self.N//2-1], self.pixsize, title="Slice of ne_3d")
+                mutils.plot_ne_image(np.log10(ne_3d[:,:,self.N//2-1]), self.pixsize, title="Slice of log10(ne_3d)")
+                mutils.plot_ne_profile(ne_3d[:,:,self.N//2-1], self.pixsize, self.ne_funct, title="ne profile vs user function")
 
             # Calculate the RM by integrating over the 3rd axis
             RMimage = mutils.RM_integration(ne_3d,B_field_norm,self.pixsize,axis=2)
@@ -565,6 +598,23 @@ class MagneticFieldModel:
 
         return
 
+def str2bool(v):
+    """
+    Parse input of the form 
+
+    -fluctuate_ne True
+    -fluctuate_ne False
+
+    """
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean type expected.')
+    
 if __name__ == "__main__":
     if int(sys.version[0]) < 3:
         sys.exit("PLEASE USE PYTHON3 TO RUN THIS CODE. EXITING")    
@@ -584,37 +634,42 @@ if __name__ == "__main__":
     model_group.add_argument('-xi','--xi', help='Vector potential spectral index (= 2 + {Bfield power law spectral index}, Default Kolmogorov.)', type=float, default=5.67)
     model_group.add_argument('-eta','--eta', help='Exponent relating B field to electron density profile (default 0.5).', type=float, default=0.5)
     model_group.add_argument('-B0','--B0', help='Central magnetic field strength in muG. (Default 1.0).', type=float, default=1.0)
-    model_group.add_argument('-lmax','--lambdamax', help='Maximum fluctuation scale in kpc. (Default None, i.e. one reversal scale: max size of grid/2).', default=None, type=float)
+    model_group.add_argument('-lambdamax','--lambdamax', help='Magnetic field maximum fluctuation scale in kpc. (Default None, i.e. max, i.e. one reversal scale = (max-size of grid)/2 ).', default=None, type=float)
     model_group.add_argument('-pixsize','--pixsize', help='Pixsize in kpc. Default 1 pix = 3 kpc.', type=float, default=3.0)
     model_group.add_argument('-N' ,'--N', help='Amount of pixels (default 512, power of 2 recommended).', type=int, default=512)
     # Electron density beta model parameters
     model_group.add_argument('-ne0' ,'--ne0', help='Central electron density for beta model in cm^-3.', type=float, default=0.0031)
     model_group.add_argument('-rc' ,'--rc', help='Core radius in kpc.', type=float, default=341)
     model_group.add_argument('-beta' ,'--beta', help='Beta power for beta model.', type=float, default=0.77)
+    # If we want to add fluctuations to the electron density
+    model_group.add_argument('-fluctuate_ne' ,'--fluctuate_ne', help='Whether to add lognormal fluctuations to the electron density. Default False', type=str2bool, default=False)
+    model_group.add_argument('-mu_ne_fluct', '--mu_ne_fluct', help = 'Mean of the fluctuations in the electron density. Is not important because we normalise with the electron density profile anyway.', type = float, default = 1.0)
+    model_group.add_argument('-sigma_ne_fluct', '--sigma_ne_fluct', help = 'Standard deviation of the fluctuations in the electron density', type = float, default = 0.2)
+    model_group.add_argument('-lambdamax_ne_fluct', '--lambdamax_ne_fluct', help='Electron density maximum fluctuation scale in kpc. (Default None, i.e. one reversal scale: max size of grid/2).', default=None, type=float)
 
     # Computational parameters group
     computational_group = parser.add_argument_group('Computational Parameters')
     computational_group.add_argument('-dtype','--dtype', help='Bit type to use 32 bit (default) or 64 bit.', type=int, default=32)
-    computational_group.add_argument('-garbagecollect','--garbagecollect', help='Let script manually free up memory in key places (default True).', type=bool, default=True)
-    computational_group.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. (default False).', type=bool, default=False)
-    computational_group.add_argument('-subcube_ne' ,'--subcube_ne', help='Whether to assume electron density profile is spherically symmetrical and speed up calculations. (default True)', type=bool, default=True)
+    computational_group.add_argument('-garbagecollect','--garbagecollect', help='Let script manually free up memory in key places (default True).', type=str2bool, default=True)
+    computational_group.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. (default False).', type=str2bool, default=False)
+    computational_group.add_argument('-subcube_ne' ,'--subcube_ne', help='Whether to assume electron density profile is spherically symmetrical and speed up calculations. (default True)', type=str2bool, default=True)
 
     # Output parameters group
     output_group = parser.add_argument_group('Output Parameters')
     output_group.add_argument('-savedir','--savedir', help='Where to save results. (default current working dir "./")', type=str, default="./")
-    output_group.add_argument('-saverawfields','--saverawfields', help='Whether to save the unnormalised A vector potential and B field. (default True)', type=bool, default=True)
-    output_group.add_argument('-saveresults','--saveresults', help='Whether to save the normalised B field, RM images, etc (default True).', type=bool, default=True)
+    output_group.add_argument('-saverawfields','--saverawfields', help='Whether to save the unnormalised A vector potential and B field. (default True)', type=str2bool, default=True)
+    output_group.add_argument('-saveresults','--saveresults', help='Whether to save the normalised B field, RM images, etc (default True).', type=str2bool, default=True)
 
     # Imaging parameters group
     imaging_group = parser.add_argument_group('Imaging Parameters')
     imaging_group.add_argument('-beamsize' ,'--beamsize', help='Image beam size in arcsec, for smoothing RM images and depolarisation (default 20asec).', type=float, default=20.0)
     imaging_group.add_argument('-frame', '--frame', choices=["observedframe", "clusterframe"], 
-                            help='Which frame to compute the RM and depol images. Default = observedframe.', 
-                            default="observedframe")
+                                help='Which frame to compute the RM and depol images. Default = observedframe.', 
+                                default="observedframe")
 
     # Testing and recomputation group
     testing_group = parser.add_argument_group('Testing and Re-computation')
-    testing_group.add_argument('-testing','--testing', help='Produce validation plots (default False).', type=bool, default=False)
+    testing_group.add_argument('-testing','--testing', help='Produce validation plots (default False).', type=str2bool, default=False)
 
     args = vars(parser.parse_args())
 
@@ -633,6 +688,7 @@ if __name__ == "__main__":
     self = model
     self.run_model()
 
-    run magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 3.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields False -saveresults True -cz 0.021 -testing True
-    python magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 3.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields False -saveresults True -cz 0.021 -testing True
+    rm *log
+    run magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 3.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields True -saveresults True -cz 0.021 -testing True -p 10 -fluctuate_ne False
+    python magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 3.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields True -saveresults True -cz 0.021 -testing True -p 10 -fluctuate_ne True -sigma_ne_fluct 0.2 -lambdamax_ne_fluct 100
     """

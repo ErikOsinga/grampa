@@ -1,6 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pyfftw
+import pyFC
 
 from scipy import stats
 from astropy.convolution import convolve, Gaussian2DKernel
@@ -693,6 +694,38 @@ def plotRMimage(RMimage, pixsize, title=''):
     plt.title(title)
     plt.show()
 
+def plot_ne_image(neimage, pixsize, title=''):
+    N = len(neimage)
+
+    extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
+
+    plt.imshow(neimage,extent=extent,origin='lower',cmap='inferno')
+    cbar = plt.colorbar()
+    cbar.set_label("$n_e$ [cm$^{-3}$]")
+    plt.xlabel('x [kpc]')
+    plt.ylabel('y [kpc]')
+    plt.title(title)
+    plt.show()
+
+def plot_ne_profile(neimage, pixsize, ne_funct, title=''):
+    """
+    Assumes a 2D image slice neimage is given.
+    """
+    N = len(neimage)
+
+    # Plot the profile of the neimage slice given
+    all_r, profile = radial_profile(neimage, center=[N//2-1,N//2-1])
+    all_r *= np.int32(pixsize)
+    
+    fig, ax = plt.subplots(figsize=(8,8))
+    plt.plot(all_r,profile,label='ne_3d radial profile',marker='o',markersize=2)
+    # Compare with density profile
+    density = ne_funct(all_r)
+    plt.plot(all_r,density,label='Density profile function')
+
+    plt.legend()
+    plt.show()
+
 def plot_RM_powerspectrum(RMimage, xi , Lambda_max, title=''):
     """
     Plots only made when --testing is enabled
@@ -789,3 +822,157 @@ def plotdepolimage(Polintimage, pixsize, title=""):
     plt.ylabel('y [kpc]')
     plt.title(title)
     plt.show()
+
+def gen_ne_fluct(xi, N, pixsize, mu = 1, s = 0.2, Lambda_max=None, Lambda_min=None, indices=True):
+    """ Added by Affan Khadir
+
+    The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
+    
+    In this way, Lambda = 0.5* 2*np.pi/k. Thus the smallest possible k mode (k=1) 
+    always corresponds to Lambda=(N*pixsize)/2
+    e.g., Lambda_max = 512 kpc for N=1024 and p=1
+    Thus the next k mode (k=2) corresponds to 256 kpc and k=2 to 128 kpc etc..
+
+    Parameters
+    ----------
+    indices -- boolean -- whether 'k' (the 'k-modes') are given as indices or as values
+    mu      -- float   -- determines the multiplicative factor for the mean in the lognormal distribution 
+    s       -- float   -- determines the multiplicative factor for the sigma in the lognormal distribution
+    
+    Returns
+    ---------
+    ne_fluct -- (N, N, N) numpy array -- lognormal fluctuations of the electron density
+    """
+    if Lambda_max is not None:
+        if indices:
+            kmin = (N*pixsize/2) / Lambda_max
+        else: # Mask all k modes that are smaller than kmax, corresponds to larger than Lambda_max
+            kmin = np.pi/Lambda_max
+    else: 
+        kmin = 1
+
+    if Lambda_min is not None:
+        if indices:
+            kmax = (N*pixsize/2) / Lambda_min
+        else: # Mask all k modes that are larger than kmin, corresponds to smaller than Lambda_min
+            kmax =  np.pi/Lambda_min
+    else:
+        kmax = N
+
+    fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu, sigma= s, beta=-(xi -2))
+    fc.gen_cube()
+    ne_fluct = fc.cube
+
+    return ne_fluct
+
+def normalise_ne_field(xvec_length, ne_fluct, ne_funct, subcube=False):
+    """
+    Function to normalize the ne field such that it follows the requested ne profile
+    """
+    # Just some random normalisation / given by the mean 
+    average_profile = np.mean(ne_fluct) # ne field should have no radial dependence yet
+                                        
+    ne_3d = ne_funct(xvec_length) # (N,N,N) for subcube=False or (N//2+1,N//2+1,N//2+1) for subcube=True
+        
+    if not subcube: # generated full 3D electron density cube
+        ne_3d = ne_fluct/average_profile * ne_3d
+    else: # normalise with subcube (assumed spherical electron density profile for normalisation)
+        ne_3d = normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d)
+
+    return ne_3d
+
+def normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d_subcube):
+    """
+    Normalise the full electron-density fluctuation field (N x N x N) by 
+    only working with a subcube (N//2+1 x N//2+1 x N//2+1) and 
+    replicating/flipping it into all eight octants.
+
+    Parameters
+    ----------
+    ne_fluct : np.ndarray
+        Full 3D array of shape (N, N, N). The raw electron-density fluctuations.
+    average_profile : float
+        A normalization factor, typically the mean of ne_fluct.
+    ne_3d_subcube : np.ndarray
+        The radial electron-density subcube of shape (N//2+1, N//2+1, N//2+1),
+        representing the positive octant plus one extra cell in each dimension.
+
+    Returns
+    -------
+    ne_3d_norm : np.ndarray
+        The normalized electron-density cube of shape (N, N, N).
+    """
+
+    N = ne_fluct.shape[0]
+    expected_shape = (N//2 + 1, N//2 + 1, N//2 + 1)
+    assert ne_3d_subcube.shape == expected_shape, (
+        f"ne_3d_subcube must be of shape {expected_shape}, but got {ne_3d_subcube.shape}."
+    )
+    
+    ne_3d_norm = np.zeros_like(ne_fluct, dtype=np.float32)
+
+    # ---------------------------
+    # 1) All "negative" directions
+    # ---------------------------
+    ne_3d_norm[:N//2-1, :N//2-1, :N//2-1] = (
+        ne_fluct[:N//2-1, :N//2-1, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 1:N//2, 1:N//2], axis=(0, 1, 2))
+    )
+
+    # -----------------------------------------
+    # 2) Positive x, negative y, negative z
+    # -----------------------------------------
+    ne_3d_norm[N//2-1:, :N//2-1, :N//2-1] = (
+        ne_fluct[N//2-1:, :N//2-1, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[0:, 1:N//2, 1:N//2], axis=(1, 2))
+    )
+
+    # -----------------------------------------
+    # 3) Positive y, negative x, negative z
+    # -----------------------------------------
+    ne_3d_norm[:N//2-1, N//2-1:, :N//2-1] = (
+        ne_fluct[:N//2-1, N//2-1:, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 0:, 1:N//2], axis=(0, 2))
+    )
+
+    # -----------------------------------------
+    # 4) Positive z, negative x, negative y
+    # -----------------------------------------
+    ne_3d_norm[:N//2-1, :N//2-1, N//2-1:] = (
+        ne_fluct[:N//2-1, :N//2-1, N//2-1:] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 1:N//2, 0:], axis=(0, 1))
+    )
+
+    # -----------------------------------------
+    # 5) Positive x & y, negative z
+    # -----------------------------------------
+    ne_3d_norm[N//2-1:, N//2-1:, :N//2-1] = (
+        ne_fluct[N//2-1:, N//2-1:, :N//2-1] / average_profile
+        * np.flip(ne_3d_subcube[0:, 0:, 1:N//2], axis=(2,))
+    )
+
+    # -----------------------------------------
+    # 6) Positive x & z, negative y
+    # -----------------------------------------
+    ne_3d_norm[N//2-1:, :N//2-1, N//2-1:] = (
+        ne_fluct[N//2-1:, :N//2-1, N//2-1:] / average_profile
+        * np.flip(ne_3d_subcube[0:, 1:N//2, 0:], axis=(1,))
+    )
+
+    # -----------------------------------------
+    # 7) Negative x, positive y & z
+    # -----------------------------------------
+    ne_3d_norm[:N//2-1, N//2-1:, N//2-1:] = (
+        ne_fluct[:N//2-1, N//2-1:, N//2-1:] / average_profile
+        * np.flip(ne_3d_subcube[1:N//2, 0:, 0:], axis=(0,))
+    )
+
+    # ------------------
+    # 8) All "positive"
+    # ------------------
+    ne_3d_norm[N//2-1:, N//2-1:, N//2-1:] = (
+        ne_fluct[N//2-1:, N//2-1:, N//2-1:] / average_profile
+        * ne_3d_subcube[0:, 0:, 0:]
+    )
+
+    return ne_3d_norm

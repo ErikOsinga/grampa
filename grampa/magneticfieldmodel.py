@@ -87,7 +87,7 @@ class MagneticFieldModel:
         self.savedir = args['savedir']
         self.saverawfields = args['saverawfields']
         self.saveresults = args['saveresults']
-        self.redshift_dilution = args['redshift_dilution']
+        self.frame = args['frame']
         self.nthreads_fft = 48
 
         # Check resolution and beam size
@@ -157,8 +157,14 @@ class MagneticFieldModel:
         else:
             paramstring = 'N=%i_p=%i_B0=%.1f_%s_eta=%.2f_s=%s_Lmax=%i%s%s' % (
                 self.N, self.pixsize, self.B0, 'xi=%.2f' % self.xi, self.eta, self.sourcename, self.lambdamax, '_it' + str(self.iteration), '_b%.2fasec' % self.beamsize)
-        if self.redshift_dilution:
-            paramstring += '_zd'
+        if self.frame == "observedframe":
+            paramstring += '_obsframe'
+        elif self.frame == "clusterframe":
+            paramstring += '_clusterframe'
+        else:
+            errormsg = f"Error: {self.frame=} but it can only be 'observedframe' or 'clusterframe'."
+            self.logger.error(errormsg)
+            raise ValueError(errormsg)
         return paramstring
     
     def log_parameters(self):
@@ -323,7 +329,7 @@ class MagneticFieldModel:
                 print("Plotting normalised B-field power spectrum")
                 mutils.plot_B_field_powerspectrum(B_field_norm, self.xi, self.lambdamax)
 
-            print ("Calculating rotation measure images.")
+            self.logger.info("Calculating rotation measure images.")
             # now we need full 3D density cube
             if subcube:
                 ne_3d = mutils.cube_from_subcube(ne_3d, self.N, self.ftype)
@@ -333,7 +339,12 @@ class MagneticFieldModel:
             # Also integrate over half of the third axis. For in-cluster sources
             RMimage_half = mutils.RM_halfway(ne_3d,B_field_norm,self.pixsize,axis=2)
 
-            # Convolve the RM image with this resolution.
+            # Correct for redshift dilution if RM is requested in observed frame
+            if self.frame == "observedframe":
+                RMimage = RMimage / (1+self.cz)**2
+                RMimage_half = RMimage_half / (1+self.cz)**2
+
+            # Convolve the RM image with the requested resolution.
             # From here we can start to use float64 again, because the images are 2D
             RMconvolved, RMhalfconvolved = mutils.convolve_with_beam([RMimage,RMimage_half], self.FWHM, self.pixsize)
 
@@ -360,6 +371,55 @@ class MagneticFieldModel:
         phi_intrinsic = 45*np.pi/180 # degrees to radians
         #Observed wavelength of radiation in meters
         wavelength = (speed_of_light/(self.reffreq*u.MHz)).to(u.m).value
+
+        # Calculate observed polarisation angle by rotating the intrinsic angle
+        if self.frame == "observedframe": # phi_obs = phi_intrinsic + RM_obs*lambda_obs^2
+            phi_obs = mutils.calc_phi_obs(phi_intrinsic, RMimage, wavelength) # Shape (N,N)
+            phi_obs_inside = mutils.calc_phi_obs(phi_intrinsic, RMimage_half, wavelength)
+        elif self.frame == "clusterframe": # phi_obs = phi_intrinsic + RM_cluster*lambda_cluster^2
+            wavelength_cluster = wavelength / (1+self.cz)
+            phi_obs = mutils.calc_phi_obs(phi_intrinsic, RMimage, wavelength_cluster)
+            phi_obs_inside = mutils.calc_phi_obs(phi_intrinsic, RMimage_half, wavelength_cluster)
+
+        # Convert the pol angle and polarised intensity (constant) to Stokes Q and U
+        polint_intrinsic = 1 # Arbitrary value, now polint will correspond to polarisation fraction p/p0
+        self.logger.info("Calculating Stokes Q and U images")
+        Qflux, Uflux = mutils.StokesQU_image(phi_obs, polint_intrinsic)
+        # Also for a screen inside the cluster (less rotation)
+        Q_half, U_half = mutils.StokesQU_image(phi_obs_inside, polint_intrinsic)
+
+        self.logger.info("Convolving Stokes Q and U images")
+        self.Qconvolved, self.Uconvolved = mutils.convolve_with_beam([Qflux,Uflux], self.FWHM, self.pixsize)
+        self.Qconvolved_half, self.Uconvolved_half = mutils.convolve_with_beam([Q_half,U_half], self.FWHM, self.pixsize)
+
+        # polangle = np.arctan2(Uconvolved,Qconvolved)*0.5
+        self.Polint = np.sqrt(self.Qconvolved**2+self.Uconvolved**2)
+        # polangle_inside = np.arctan2(Uconvolved_half,Qconvolved_half)*0.5
+        self.Polint_inside = np.sqrt(self.Qconvolved_half**2+self.Uconvolved_half**2)
+
+        # Calculate the column density image
+        self.coldens = mutils.columndensity(ne_3d, self.pixsize, axis=2)
+
+        # and integrate B field along the LOS 
+        self.Bfield_integrated = np.sum(B_field_norm[:,:,:,2],axis=2)
+
+        dtime = time.time()-self.starttime
+        self.logger.info(f"Script calculations finished. Took {dtime:.1f} seconds which is {dtime/3600.:.1f} hours or {dtime/86400.:.1f} days")
+
+        if self.testing:
+            # Plot depol images
+            mutils.plotdepolimage(self.Polint, self.pixsize, "Polint full pathlength")
+            mutils.plotdepolimage(self.Polint_inside, self.pixsize, "Polint half pathlength")
+
+        if self.saveresults:
+            self.save_results()
+        else:
+            self.logger.info("Not saving results to file.")
+
+        dtime = time.time()-self.starttime
+        self.logger.info("Script fully finished. Took %i seconds which is %.1f hours or %.1f days"%(dtime,dtime/3600.,dtime/86400.))
+
+        return
 
     def computeRMimage_from_file(self):
         """
@@ -448,6 +508,36 @@ class MagneticFieldModel:
         Bfield_file = f"{self.savedir}Bfield_N={self.N:.0f}_p={self.pixsize:.0f}_xi={self.xi:.2f}_Lmax={self.lambdamax:.0f}_it{self.iteration}.npy"
         
         return vectorpotential_file, Bfield_file
+    
+    def save_results(self):
+        savedir2 = self.savedir + f'after_normalise/{self.sourcename}/'
+        if not os.path.exists(savedir2):
+            os.makedirs(savedir2)
+
+        self.logger.info(f"Saving results to {savedir2}")
+
+        # Save the RM images
+        np.save(f"{savedir2}RMimage_{self.paramstring}.npy", self.RMimage)
+        np.save(f"{savedir2}RMimage_half_{self.paramstring}.npy", self.RMimage_half)
+        np.save(f"{savedir2}RMconvolved_{self.paramstring}.npy", self.RMconvolved)
+        np.save(f"{savedir2}RMhalfconvolved_{self.paramstring}.npy", self.RMhalfconvolved)
+
+        # Save the Stokes Q and U images
+        np.save(f"{savedir2}Qconvolved_{self.paramstring}.npy", self.Qconvolved)
+        np.save(f"{savedir2}Uconvolved_{self.paramstring}.npy", self.Uconvolved)
+
+        # Save the column density and B field images
+        np.save(f"{savedir2}coldens_{self.paramstring}.npy", self.coldens)
+        np.save(f"{savedir2}Bfield_integrated_{self.paramstring}.npy", self.Bfield_integrated)
+
+        # Dont save the normalised B field, it's a 3Dx3 cube so its large
+        # np.save(f"{savedir2}Bfield_{self.paramstring}.npy", self.B_field_norm)
+
+        # Save the polarisation intensity
+        np.save(f"{savedir2}Polint_{self.paramstring}.npy", self.Polint)
+        np.save(f"{savedir2}Polint_inside_{self.paramstring}.npy", self.Polint_inside)
+
+        return
 
 # The electron density model (can replace by own model, currently wraps around beta model)
 def ne_funct(r, ne0, rc, beta):
@@ -457,33 +547,35 @@ if __name__ == "__main__":
     if int(sys.version[0]) < 3:
         sys.exit("PLEASE USE PYTHON3 TO RUN THIS CODE. EXITING")    
 
-    parser = argparse.ArgumentParser(description='Create a magnetic field model with user specified parameters')
-    parser.add_argument('-sourcename','--sourcename', help='Cluster name, for saving purposes', type=str, required=True)
-    parser.add_argument('-reffreq','--reffreq', help='Reference Frequency in MHz (i.e. center of the band)', type=float, required=True)
-    parser.add_argument('-cz','--cz', help='Cluster redshift', type=float, required=True)
-    parser.add_argument('-xi','--xi', help='Vector potential spectral index (= 2 + {Bfield power law spectral index}, default Kolmogorov )', type=float, default=5.67)
-    parser.add_argument('-N' ,'--N', help='Amount of pixels (default 512, power of 2 recommended)', type=int, default=512)
+    parser = argparse.ArgumentParser(description='Create a magnetic field model with user specified parameters.')
+    parser.add_argument('-sourcename','--sourcename', help='Cluster name, for saving purposes.', type=str, required=True)
+    parser.add_argument('-reffreq','--reffreq', help='Observed radiation frequency in MHz (i.e. center of the band).', type=float, required=True)
+    parser.add_argument('-cz','--cz', help='Cluster redshift.', type=float, required=True)
+    parser.add_argument('-xi','--xi', help='Vector potential spectral index (= 2 + {Bfield power law spectral index}, Default Kolmogorov.)', type=float, default=5.67)
+    parser.add_argument('-N' ,'--N', help='Amount of pixels (default 512, power of 2 recommended).', type=int, default=512)
     parser.add_argument('-pixsize','--pixsize', help='Pixsize in kpc. Default 1 pix = 3 kpc.', default=3.0, type=float)
-    parser.add_argument('-eta','--eta', help='Exponent relating B field to electron density profile, default 0.5', type=float, default=0.5)
-    parser.add_argument('-B0','--B0', help='Central magnetic field strength in muG. Default 1.0', type=float, default=1.0)
-    parser.add_argument('-lmax','--lambdamax', help='Maximum scale in kpc. Default None (i.e. max size of grid/2).', default=None, type=float)
-    parser.add_argument('-dtype','--dtype', help='Float type to use 32 bit (default) or 64 bit', default=32, type=int)
-    parser.add_argument('-garbagecollect','--garbagecollect', help='Let script manually free up memory (Default True)', default=True, type=bool)
+    parser.add_argument('-eta','--eta', help='Exponent relating B field to electron density profile (default 0.5).', type=float, default=0.5)
+    parser.add_argument('-B0','--B0', help='Central magnetic field strength in muG. (Default 1.0).', type=float, default=1.0)
+    parser.add_argument('-lmax','--lambdamax', help='Maximum fluctuation scale in kpc. (Default None, i.e. one reversal scale: max size of grid/2).', default=None, type=float)
+    parser.add_argument('-dtype','--dtype', help='Bit type to use 32 bit (default) or 64 bit.', default=32, type=int)
+    parser.add_argument('-garbagecollect','--garbagecollect', help='Let script manually free up memory in key places (default True).', default=True, type=bool)
     ## todo
     # parser.add_argument('-doUPP','--doUPP', help='If X-ray is not found, continue with UPP', default=False, type=bool)
-    parser.add_argument('-iteration' ,'--iteration', help='For saving different random initializations. Default 0', type=int, default=0)
-    parser.add_argument('-beamsize' ,'--beamsize', help='Image beam size in arcsec, for smoothing. Default 20asec', type=float, default=20.0)
-    parser.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. Default False', type=bool, default=False)
-    parser.add_argument('-ne0' ,'--ne0', help='Central electron density in beta model.', type=float, default=0.0031)
-    parser.add_argument('-rc' ,'--rc', help='Core radius in kpc', type=float, default=341)
+    parser.add_argument('-iteration' ,'--iteration', help='For saving different random initializations (default 0).', type=int, default=0)
+    parser.add_argument('-beamsize' ,'--beamsize', help='Image beam size in arcsec, for smoothing RM images and depolarisation (default 20asec).', type=float, default=20.0)
+    parser.add_argument('-recompute' ,'--recompute', help='Whether to recompute even if data already exists. (Default False).', type=bool, default=False)
+    parser.add_argument('-ne0' ,'--ne0',   help='Central electron density for beta model in cm^-3.', type=float, default=0.0031)
+    parser.add_argument('-rc' ,'--rc',     help='Core radius in kpc', type=float, default=341)
     parser.add_argument('-beta' ,'--beta', help='Beta power for beta model', type=float, default=0.77)
-    parser.add_argument('-testing','--testing', help='Produce validation plots. Default False', default=False, type=bool)
+    parser.add_argument('-testing','--testing', help='Produce validation plots (default False).', default=False, type=bool)
 
-    parser.add_argument('-savedir' ,'--savedir', help='Where to save results. Default ./', type=str, default="./")
-    parser.add_argument('-saverawfields','--saverawfields', help='Whether to save the unnormalised A vector potential and B field. These can be quite big, but allow rapid re-calculation of different ne normalisations. Default True', default=True, type=bool)
-    parser.add_argument('-saveresults','--saveresults', help='Whether to save the normalised B field, RM images, etc (everything after normalising the B field). Default True', default=True, type=bool)
+    parser.add_argument('-savedir' ,'--savedir', help='Where to save results. (default current working dir "./")', type=str, default="./")
+    parser.add_argument('-saverawfields','--saverawfields', help='Whether to save the unnormalised A vector potential and B field. These can be quite big, but allow rapid re-calculation of different ne normalisations. (default True)', default=True, type=bool)
+    parser.add_argument('-saveresults','--saveresults', help='Whether to save the normalised B field, RM images, etc (all results after normalising the B field). (default True)', default=True, type=bool)
 
-    parser.add_argument('-redshift_dilution', '--redshift_dilution', help='Calculate the RM in the cluster frame (True) or in observed frame (False)', default=True, type=bool)
+    parser.add_argument('-frame', '--frame', choices = ["observedframe" "clusterframe"]
+                        , help='Which frame to compute the RM and depol images. Either in the cluster frame (i.e. at cluster redshift), or at the observed frequency (reffreq). RMs are smaller by factor (1+z)^-2 in the observer frame due to redshift. Default = observedframe'
+                        , default="observedframe")
 
     args = vars(parser.parse_args()) 
 

@@ -232,11 +232,13 @@ def model_xi(k, xi, N, lambdamax, pixsize, indices=True):
     indices -- boolean -- whether 'k' (the 'k-modes') are given as indices or as values
     """
 
-    if lambdamax is None: # scale invariant. Easy.
-        return k**-xi
-    else:
-        result = k**-xi
+    # make sure k=0 returns 0 amplitude, i.e. a zero-mean signal
+    mask = k == 0
+    k[mask] = np.inf
 
+    result = k**-xi # scale invariant. Easy.
+
+    if lambdamax is not None:
         # The wave mode that corresponds to the given Lambda_max in kpc
         #### Following Murgia definition that Lambda is the half-wavelength = 0.5*(2pi/k)
         kmax = np.pi/lambdamax  
@@ -252,7 +254,8 @@ def model_xi(k, xi, N, lambdamax, pixsize, indices=True):
         else: # Mask all k modes that are smaller than kmax, corresponds to larger than Lambda_max
             result[k<kmax] = 0
 
-        return result
+    
+    return result
 
 def magnetic_field_crossproduct(kvec, field, N, ctype):
     """
@@ -385,6 +388,7 @@ def calculate_vectorpotential(N, xi, Lambda_max, pixsize, ftype):
     """
     # Set indices=True if we are computing it the fast way, with the gaussian_random_field3D function
     def Peff(k):
+        # make sure k=0 returns 0
         return model_xi(k, xi, N, Lambda_max, pixsize, indices=True)
 
     logger.info("Generating random field for vector potential A.")
@@ -720,15 +724,15 @@ def convolve_with_beam(images, FWHM, pixsize=1.0):
     Convolve the images with a (circular) Gaussian beam with FWHM given in kpc,
     which is equal to the amount of pixels if 1 pixel is 1 kpc
     """
-    print ("Convolving with a beam FWHM of %i kpc"%FWHM)
+    logger.info(f"Convolving with a beam FWHM of {FWHM:.0f} kpc")
 
     # FWHM to standard deviation divided by pixel size 
     std = FWHM/(2*np.sqrt(2*np.log(2))) / pixsize
 
-    print ("Which is a standard deviation of %.1f pixels"%std)
+    logger.info(f"Which is a standard deviation of {std:.1f} pixels")
 
     if std < 2:
-        print ("Since the beam resolution (FWHM %.1f kpc or std %.1f kpc) is so close to the simulated resolution (%.1f kpc), NOT smoothing"%(FWHM,std*pixsize, pixsize))
+        logger.info(f"Since the beam resolution (FWHM = {FWHM=:.1f} kpc or std = {std*pixsize:.1f} kpc) is so close to the simulated resolution ({pixsize:.1f} kpc), NOT smoothing")
         return images 
 
     beam = Gaussian2DKernel(std)
@@ -736,3 +740,52 @@ def convolve_with_beam(images, FWHM, pixsize=1.0):
     for image in images:
         convolved.append(convolve(image,beam,boundary='extend',normalize_kernel=True))
     return convolved
+
+def calc_phi_obs(phi_intrinsic, RM, wavelength):
+    """
+    Calculate observed polarisation angle at a certain wavelength
+    Given the intrinsic polarisation angle and the rotation measure
+    """
+    phi_obs = (phi_intrinsic + RM * wavelength**2) % (2*np.pi)
+    return phi_obs 
+
+def StokesQU_image(phi_obs, polint_intrinsic):
+    """
+    Calculate the Stokes Q and U flux given the intrinsic polarised intensity 
+    and the polarisation angle
+    """
+    Q = polint_intrinsic / np.sqrt(1+np.tan(2*phi_obs)**2)
+    
+    U = np.sqrt(polint_intrinsic**2 - Q**2)
+    
+    # Positive Q for angle between -pi/2 and pi/2
+    # which in our definition is angle > 3/2 pi or < 1/2 pi
+    # Thus negative Q for angles between 1/2pi and 3/2 pi
+    negQ = np.bitwise_and(np.pi/2 <= phi_obs, phi_obs <= 3*np.pi/2)
+    Q[negQ] *= -1
+    
+    # Negative U for angles larger than pi
+    negU = phi_obs > np.pi 
+    U[negU] *= -1
+    
+    return Q, U
+
+def columndensity(n_e, pixsize, axis):
+    """
+    We can calculate the column density image by integrating over a certain axis (Riemann sum)
+    pixels are given in kpc, so we should convert that to cm
+    """
+    kpc = 3.08567758e21 #centimeters
+    return pixsize*kpc*np.sum(n_e,axis=axis)
+
+def plotdepolimage(Polintimage, pixsize, title=""):
+    """ Plot depol image"""
+    N = len(Polintimage)
+    extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
+    plt.imshow(Polintimage,extent=extent,origin='lower')
+    cbar = plt.colorbar()
+    cbar.set_label("Depol [$p$/$p_0$]")
+    plt.xlabel('x [kpc]')
+    plt.ylabel('y [kpc]')
+    plt.title(title)
+    plt.show()

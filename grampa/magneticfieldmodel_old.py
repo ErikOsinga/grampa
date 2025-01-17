@@ -529,7 +529,7 @@ def ne_mean(r, r500):
     f = interp1d(r_mean, np.log10(mean_dens), kind='cubic', fill_value='extrapolate')
     return np.power(10,f(r))
 
-def gen_ne_fluct(xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, r500 = 925):
+def gen_ne_fluct(N, xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, r500 = 925):
     """ Added by Affan Khadir
 
     The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
@@ -720,7 +720,7 @@ def normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d_subcube):
     assert ne_3d_subcube.shape == expected_shape, (
         f"ne_3d_subcube must be of shape {expected_shape}, but got {ne_3d_subcube.shape}."
     )
-    
+
     ne_3d_norm = np.zeros_like(ne_fluct, dtype=np.float32)
 
     # ---------------------------
@@ -1655,7 +1655,7 @@ if __name__ == '__main__':
         if fluctuate_ne:  # type: ignore
             print("Generating ne cube with fluctuations")
             # Generate fluctuations in ne following the mean profile or the requested beta function
-            ne_3d = gen_ne_fluct(xi = xi, Lambda_max=Lambda_max, indices=True
+            ne_3d = gen_ne_fluct(N = N, xi = xi, Lambda_max=Lambda_max, indices=True
                                 , Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct
                                 , r500 = r500)
 

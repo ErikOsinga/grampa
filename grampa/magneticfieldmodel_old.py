@@ -529,7 +529,7 @@ def ne_mean(r, r500):
     f = interp1d(r_mean, np.log10(mean_dens), kind='cubic', fill_value='extrapolate')
     return np.power(10,f(r))
 
-def gen_ne_fluct(N, xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2, r500 = 925):
+def gen_ne_fluct(N, pixsize, xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2):
     """ Added by Affan Khadir
 
     The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
@@ -1655,9 +1655,8 @@ if __name__ == '__main__':
         if fluctuate_ne:  # type: ignore
             print("Generating ne cube with fluctuations")
             # Generate fluctuations in ne following the mean profile or the requested beta function
-            ne_3d = gen_ne_fluct(N = N, xi = xi, Lambda_max=Lambda_max, indices=True
-                                , Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct
-                                , r500 = r500)
+            ne_3d = gen_ne_fluct(N = N, pixsize=pixsize, xi = xi, Lambda_max=Lambda_max, indices=True
+                                , Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct)
 
             # Vector denoting the real space positions. The 0 point is in the middle.
             # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True

@@ -21,6 +21,7 @@ import psutil
 import pyFC
 from scipy.interpolate import interp1d
 
+import skimage
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3)
 
 """
@@ -529,7 +530,8 @@ def ne_mean(r, r500):
     f = interp1d(r_mean, np.log10(mean_dens), kind='cubic', fill_value='extrapolate')
     return np.power(10,f(r))
 
-def gen_ne_fluct(N, pixsize, xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2):
+def gen_ne_fluct(N, pixsize, xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2
+    , force_compute=False):
     """ Added by Affan Khadir
 
     The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
@@ -563,11 +565,24 @@ def gen_ne_fluct(N, pixsize, xi, Lambda_max=None, indices=True, Lambda_min=None,
         else: # Mask all k modes that are larger than kmin, corresponds to smaller than Lambda_min
             kmax =  np.pi/Lambda_min
     else:
-        kmax = N
+        kmax = N # N/2 , but set to N/2 anyways by LogNormalFractalCube
 
-    fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu, sigma= s, beta=-(xi -2))
-    fc.gen_cube()
-    ne_fluct = fc.cube
+    if N > 1024 and not force_compute: # False: #
+        print(f"Too large cube with {N=}")
+        print("Using workaround with loading N=1024 cube with twice as large pixsize and upsampling")
+        if N == 2048:
+            # print("Assumes the same Lambda_max is used")
+            nefile = f'mean_ne/ne_3d_unnormalised_N=1024_pixsize={(pixsize*2):.0f}_Lmax={Lambda_max:.0f}.npy'
+            print(f"Loading {nefile}")
+            ne_fluct = np.load(nefile)
+            ne_fluct = skimage.transform.rescale(ne_fluct, scale=(2, 2, 2), 
+                         mode='constant', preserve_range=True, anti_aliasing=True)
+
+    else:
+        fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu
+            , sigma= s, beta=-(xi -2))
+        fc.gen_cube()
+        ne_fluct = fc.cube
 
     return ne_fluct
 

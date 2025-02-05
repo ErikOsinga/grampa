@@ -226,8 +226,9 @@ def model_xi(k, xi, N, lambdamax, pixsize, indices=True):
 
     The maximum scale is defined as the magnetic field reversal scale,
     see footnote in Murgia+2004. In this way, Lambda = 0.5* 2*np.pi/k 
-    Thus the smallest possible k mode (k=1) always corresponds to Lambda=(N*pixsize)/2
-    e.g., Lambda_max = 512 kpc for N=1024 and p=1
+    
+    Thus the smallest possible k mode (k=1) (index) always corresponds to Lambda=(N*pixsize)/2
+        e.g., Lambda_max = 512 kpc for N=1024 and p=1
     Thus the next k mode (k=2) corresponds to 256 kpc and k=2 to 128 kpc etc..
 
     indices -- boolean -- whether 'k' (the 'k-modes') are given as indices or as values
@@ -242,20 +243,19 @@ def model_xi(k, xi, N, lambdamax, pixsize, indices=True):
     if lambdamax is not None:
         # The wave mode that corresponds to the given Lambda_max in kpc
         #### Following Murgia definition that Lambda is the half-wavelength = 0.5*(2pi/k)
-        kmax = np.pi/lambdamax  
+        kmin = np.pi/lambdamax  
 
         # The index of the wave mode that corresponds to the given Lambda max in kpc
-        k_index_max = (N*pixsize/2) / lambdamax
+        kmin_index = (N*pixsize/2) / lambdamax
 
         # Because the Gaussian_random_field function uses indices, indices
-        # are given to this function, so we should mask on index length
+        # are given to this function, so we should mask on index
         if indices:
-            result[k<k_index_max] = 0
+            result[k<kmin_index] = 0
 
-        else: # Mask all k modes that are smaller than kmax, corresponds to larger than Lambda_max
-            result[k<kmax] = 0
+        else: # Mask all k modes that are smaller than kmin, corresponds to scales larger than Lambda_max
+            result[k<kmin] = 0
 
-    
     return result
 
 def magnetic_field_crossproduct(kvec, field, N, ctype):
@@ -847,6 +847,7 @@ def gen_ne_fluct(xi, N, pixsize, mu = 1, s = 0.2, Lambda_max=None, Lambda_min=No
         if indices:
             kmin = (N*pixsize/2) / Lambda_max
         else: # Mask all k modes that are smaller than kmax, corresponds to larger than Lambda_max
+            raise NotImplementedError("Lambda_max should be given as an index")
             kmin = np.pi/Lambda_max
     else: 
         kmin = 1
@@ -855,6 +856,7 @@ def gen_ne_fluct(xi, N, pixsize, mu = 1, s = 0.2, Lambda_max=None, Lambda_min=No
         if indices:
             kmax = (N*pixsize/2) / Lambda_min
         else: # Mask all k modes that are larger than kmin, corresponds to smaller than Lambda_min
+            raise NotImplementedError("Lambda_max should be given as an index")
             kmax =  np.pi/Lambda_min
     else:
         kmax = N

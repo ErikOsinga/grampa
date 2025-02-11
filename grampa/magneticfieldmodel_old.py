@@ -695,6 +695,42 @@ def magnetic_field_crossproduct(kvec, field):
     
     return fourier_B_field
 
+def validate_ne_norm(ne_3d):
+    # Determine the size of the cube and the central slice index
+    N = len(ne_3d)
+    central_slice = ne_3d[:, :, N // 2]
+
+    # Create a new figure and axis
+    fig, ax = plt.subplots()
+
+    # Display the central slice with the inferno colormap
+    im = ax.imshow(central_slice, cmap='inferno')
+    ax.set_title("center of normalised fluct ne")
+    fig.colorbar(im, ax=ax)
+
+    # Ensure the './validation/' directory exists
+    os.makedirs("./validation", exist_ok=True)
+
+    # Save the figure to the './validation/' directory without showing it
+    fig.savefig("./validation/center_of_normalised_fluct_ne.png")
+
+    # Close the figure to free up memory
+    plt.close(fig)
+
+    # Create a new figure and axis
+    fig, ax = plt.subplots()
+
+    # Display the central slice with the inferno colormap
+    im = ax.imshow(np.log10(central_slice), cmap='inferno')
+    ax.set_title("log10 center of normalised fluct ne")
+    fig.colorbar(im, ax=ax)
+
+    # Save the figure to the './validation/' directory without showing it
+    fig.savefig("./validation/center_of_normalised_fluct_ne_log10.png")
+
+    # Close the figure to free up memory
+    plt.close(fig)
+
 def normalise_ne_field(xvec_length, ne_fluct, usemean_ne = True, r500 = 925, subcube=False):
     """
     Function to normalize the ne field such that it follows the requested ne profile
@@ -714,6 +750,8 @@ def normalise_ne_field(xvec_length, ne_fluct, usemean_ne = True, r500 = 925, sub
         ne_3d = ne_fluct/average_profile * ne_3d#.reshape(N, N, N)
     else: # normalise with subcube (spherical electron density profile for normalisation)
         ne_3d = normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d)
+        # make a plot to verify things are going well
+        validate_ne_norm(ne_3d)
 
     return ne_3d
 
@@ -1692,6 +1730,9 @@ if __name__ == '__main__':
 
         # Normalise the B field such that it follows the electron density profile ^eta
         print ("Normalising magnetic field profile with electron density profile")
+        # if we fluctuate ne, we cant have subcubes for the B-field normalisation
+        if fluctuate_ne:
+            subcube=False
         B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube)
         # memoryUse = python_process.memory_info()[0]/2.**30
         # print('Memory used: %.1f GB'%memoryUse)

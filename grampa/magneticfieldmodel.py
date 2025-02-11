@@ -74,6 +74,7 @@ class MagneticFieldModel:
         self.logger.setLevel(logging.INFO)
         self.logger.info('Creating magnetic field model with GRAMPA...')
 
+        self.args = args
         self.sourcename = args['sourcename']
         self.reffreq = args['reffreq']
         self.cz = args['cz']
@@ -90,9 +91,12 @@ class MagneticFieldModel:
         self.iteration = args['iteration']
         self.beamsize = args['beamsize']
         self.recompute = args['recompute']
-        self.ne0 = args['ne0']
-        self.rc = args['rc']
-        self.beta = args['beta']
+        if 'ne0' in args.keys():
+            self.ne0 = args['ne0']
+        if 'rc' in args.keys():
+            self.rc = args['rc']
+        if 'beta' in args.keys():
+            self.beta = args['beta']
         self.fluctuate_ne = args['fluctuate_ne']
         self.mu_ne_fluct = args['mu_ne_fluct']
         self.sigma_ne_fluct = args['sigma_ne_fluct']
@@ -201,9 +205,12 @@ class MagneticFieldModel:
         self.logger.info(f" Beam FWHM = {self.FWHM:.1f} kpc")
         self.logger.info(f" dtype= float{self.dtype}")
         self.logger.info(f" Manual garbagecollect= {self.garbagecollect}")
-        self.logger.info(f" ne0= {self.ne0:.2f} cm^-3")
-        self.logger.info(f" rc= {self.rc:.2f} kpc")
-        self.logger.info(f" beta= {self.beta:.2f}")
+        if 'ne0' in self.args.keys():
+            self.logger.info(f" ne0= {self.ne0:.2f} cm^-3")
+        if 'rc' in self.args.keys():
+            self.logger.info(f" rc= {self.rc:.2f} kpc")
+        if 'beta' in self.args.keys():
+            self.logger.info(f" beta= {self.beta:.2f}")
         self.logger.info(f" testing= {self.testing}")
         self.logger.info(f" Fluctuate ne = {self.fluctuate_ne}")
         if self.fluctuate_ne:
@@ -616,6 +623,8 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean type expected.')
     
 if __name__ == "__main__":
+    # print('GRAMPA is initializing...')
+
     if int(sys.version[0]) < 3:
         sys.exit("PLEASE USE PYTHON3 TO RUN THIS CODE. EXITING")    
 
@@ -689,6 +698,6 @@ if __name__ == "__main__":
     self.run_model()
 
     rm *log
-    run magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 3.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields True -saveresults True -cz 0.021 -testing True -p 10 -fluctuate_ne False
-    python magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 3.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields True -saveresults True -cz 0.021 -testing True -p 10 -fluctuate_ne True -sigma_ne_fluct 0.2 -lambdamax_ne_fluct 100
+    run grampa/magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 10.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields True -saveresults True -cz 0.021 -testing True -fluctuate_ne False
+    python grampa/magneticfieldmodel.py -sourcename test -reffreq 944 -xi 5.67 -N 256 -pixsize 10.0 -eta 0.5 -B0 1 -dtype 32 -beamsize 20 -recompute True -savedir ../tests_local/ -saverawfields True -saveresults True -cz 0.021 -testing True -fluctuate_ne True -sigma_ne_fluct 0.2 -lambdamax_ne_fluct 100
     """

@@ -6,7 +6,6 @@ import pyFC
 from scipy import stats
 from astropy.convolution import convolve, Gaussian2DKernel
 
-
 import logging
 logger = logging.getLogger(__name__)
 

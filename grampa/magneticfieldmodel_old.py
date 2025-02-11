@@ -531,7 +531,7 @@ def ne_mean(r, r500):
     return np.power(10,f(r))
 
 def gen_ne_fluct(N, pixsize, xi, Lambda_max=None, indices=True, Lambda_min=None, mu = 1, s = 0.2
-    , force_compute=False):
+    , force_compute=False, not_upsample_ne=False):
     """ Added by Affan Khadir
 
     The maximum scale is defined as the reversal scale,see footnote in Murgia+2004.
@@ -567,20 +567,29 @@ def gen_ne_fluct(N, pixsize, xi, Lambda_max=None, indices=True, Lambda_min=None,
     else:
         kmax = N # N/2 , but set to N/2 anyways by LogNormalFractalCube
 
-    if N > 1024 and not force_compute: # False: #
+
+    if N > 1024:
         print(f"Too large cube with {N=}")
-        print("Using workaround with loading N=1024 cube with twice as large pixsize and upsampling")
         if N == 2048:
-            # print("Assumes the same Lambda_max is used")
-            nefile = f'mean_ne/ne_3d_unnormalised_N=1024_pixsize={(pixsize*2):.0f}_Lmax={Lambda_max:.0f}.npy'
-            print(f"Loading {nefile}")
-            ne_fluct = np.load(nefile)
-            ne_fluct = skimage.transform.rescale(ne_fluct, scale=(2, 2, 2), 
-                         mode='constant', preserve_range=True, anti_aliasing=True)
+            if not_upsample_ne:
+                print(f"Not upsampling because {not_upsample_ne=}")
+                nefile = f"mean_ne/ne_3d_unnormalised_N={N:.0f}_pixsize={pixsize:.0f}_Lmax={Lambda_max:.0f}.npy"
+                print(f"Loading large ne from file {nefile=}")
+                ne_fluct = np.load(nefile)
+            else:
+                print("Using workaround with loading N=1024 cube with twice as large pixsize and upsampling")
+                nefile = f'mean_ne/ne_3d_unnormalised_N=1024_pixsize={(pixsize*2):.0f}_Lmax={Lambda_max:.0f}.npy'
+                print(f"Loading and upsampling N=1024 ne from {nefile}")
+                ne_fluct = np.load(nefile)
+                ne_fluct = skimage.transform.rescale(ne_fluct, scale=(2, 2, 2), 
+                             mode='constant', preserve_range=True, anti_aliasing=True)
+        else:
+            raise NotImplementedError(f"{N=}")
 
     else:
+        print(f"Generating lognormal cube with pyFC for {N=}")
         fc = pyFC.LogNormalFractalCube(ni=N, nj=N, nk=N, kmin = kmin, kmax = kmax, mean=mu
-            , sigma= s, beta=-(xi -2))
+                                        , sigma= s, beta=-(xi -2))
         fc.gen_cube()
         ne_fluct = fc.cube
 
@@ -704,7 +713,7 @@ def normalise_ne_field(xvec_length, ne_fluct, usemean_ne = True, r500 = 925, sub
     if not subcube: # generated full 3D electron density cube
         ne_3d = ne_fluct/average_profile * ne_3d#.reshape(N, N, N)
     else: # normalise with subcube (spherical electron density profile for normalisation)
-        normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d)
+        ne_3d = normalise_ne_field_subcube(ne_fluct, average_profile, ne_3d)
 
     return ne_3d
 
@@ -1420,6 +1429,7 @@ if __name__ == '__main__':
     parser.add_argument('-fluctuate_ne' ,'--fluctuate_ne', help='Whether to add lognormal fluctuations to the electron density. Default False', type=bool, default=False)
     parser.add_argument('-mu_ne_fluct', '--mu_ne_fluct', help = 'Mean of the fluctuations in the electron density', type = float, default = 1.0)
     parser.add_argument('-sigma_ne_fluct', '--sigma_ne_fluct', help = 'Standard deviation of the fluctuations in the electron density', type = float, default = 0.2)    
+    parser.add_argument('-not_upsample_ne' ,'--not_upsample_ne', help='Whether to NOT upsample a smaller ne cube to get 2048', type=bool, default=False)
 
     parser.add_argument('-testing','--testing', help='Produce validation plots. Default False', default=False, type=bool)
     
@@ -1456,6 +1466,7 @@ if __name__ == '__main__':
     sigma_ne_fluct = args['sigma_ne_fluct']
     saveresults = args['saveresults']
     savedir = args['savedir']
+    not_upsample_ne = args['not_upsample_ne']
     if savedir[-1] != "/":
         savedir += "/"
     if not os.path.exists(savedir):
@@ -1537,6 +1548,7 @@ if __name__ == '__main__':
     if fluctuate_ne:
         print(" mu_ne_fluct = %.2f"%mu_ne_fluct)
         print(" sigma_ne_fluct = %.2f"%sigma_ne_fluct)
+        print(" not_upsample_ne = %s"%not_upsample_ne)
     print (" testing= %s"%(testing))
 
     # The electron density model (can replace by own model)
@@ -1568,96 +1580,72 @@ if __name__ == '__main__':
         # The files where the vector potential and B field are / will be saved
         vectorpotential_file, Bfield_file = BandAfieldfiles(N,pixsize,xistr,Lambda_max,itstr)
 
-        # Boolean to track whether maybe we have computed unnormalised A or B field before
-        already_computed = False
-        if os.path.isfile(vectorpotential_file) and not recompute: # type: ignore
-            already_computed = True
-            print ("Found a saved version of the vector potential with user defined parameters:")
-            print (" N=%i \n xi=%.2f Lmax=%s"%(N,xi,Lambda_max))
-
-            print ("Checking if magnetic field was also already computed..")
-            if os.path.isfile(Bfield_file):
-                print ("It is, so not loading vector potential from file")
-            else:
-                print ("It is not, loading vector potential from file..")
-                field = np.load(vectorpotential_file)
-
-        else:
-            print ("Generating random field for vector potential A.")
-            # Every component of the 3D cube of A is a vector, since A is a vector field.
-            # So A has shape (N,N,N,3)
-            # So we just generate three randomfield cubes, and each cube will be one dimension of the vector.
-
-            # Make field without the redundant Fourier components
-            field = np.zeros((N,N,N//2+1,3),dtype=ftype) + 1j*np.zeros((N,N,N//2+1,3),dtype=ftype)
-
-            # Get the normalised index length in 3D space
-            k_length = kvector_lengthonly(N)
-
-            print ("Random field x-dimension..")
-            field[:,:,:,0] = gaussian_random_field3D(N, Peff, k_length)
-            print ("Random field y-dimension..")
-            field[:,:,:,1] = gaussian_random_field3D(N, Peff, k_length)
-            print ("Random field z-dimension..")
-            field[:,:,:,2] = gaussian_random_field3D(N, Peff, k_length)
-
-        # Save the Fourier transform of the vector potential to a file if it didnt exist yet
-        if not already_computed: 
-            print ("Saving fourier vector potential to %s, such that it can be used again"%vectorpotential_file)
-            # Fourier vector potential only depends on number of pixels and assumed power law index
-            np.save(vectorpotential_file, field)
-
-        already_computed = False # Also check B field. Might not have been already computed
-        if os.path.isfile(Bfield_file) and not recompute: # type: ignore
-            already_computed = True
+        # First try to load the B field if it exists and we are not recomputing
+        if os.path.isfile(Bfield_file) and not recompute:  # type: ignore
             print ("Found a saved version of the magnetic field with user defined parameters:")
-            print (" N=%i \n xi=%.2f \n pixsize=%i Lmax=%s"%(N,xi,pixsize,Lambda_max))
+            print (" N=%i \n xi=%.2f \n pixsize=%i Lmax=%s" % (N, xi, pixsize, Lambda_max))
             print ("Loading from file..")
             B_field = np.load(Bfield_file)
-
         else:
-            print ("Generating k vector in (%i,%i,%i,3) space"%(N,N,N//2))
+            # If B field file is missing (or we want to recompute) then check for the vector potential file.
+            if os.path.isfile(vectorpotential_file) and not recompute:  # type: ignore
+                print ("Found a saved version of the vector potential with user defined parameters:")
+                print (" N=%i \n xi=%.2f Lmax=%s" % (N, xi, Lambda_max))
+                print ("Loading vector potential from file..")
+                field = np.load(vectorpotential_file)
+            else:
+                print ("Generating random field for vector potential A.")
+                # Every component of the 3D cube of A is a vector, since A is a vector field.
+                # So A has shape (N, N, N, 3)
+                # Generate three random field cubes, one for each spatial dimension.
+                field = np.zeros((N, N, N//2+1, 3), dtype=ftype) + 1j*np.zeros((N, N, N//2+1, 3), dtype=ftype)
+
+                # Get the normalised index length in 3D space
+                k_length = kvector_lengthonly(N)
+
+                print ("Random field x-dimension..")
+                field[:, :, :, 0] = gaussian_random_field3D(N, Peff, k_length)
+                print ("Random field y-dimension..")
+                field[:, :, :, 1] = gaussian_random_field3D(N, Peff, k_length)
+                print ("Random field z-dimension..")
+                field[:, :, :, 2] = gaussian_random_field3D(N, Peff, k_length)
+
+                print ("Saving fourier vector potential to %s, such that it can be used again" % vectorpotential_file)
+                np.save(vectorpotential_file, field)
+
+            print ("Generating k vector in (%i, %i, %i, 3) space" % (N, N, N//2))
             kvec = kvector(N, 3, pixsize)
 
             print ("Calculating magnetic field using the crossproduct Equation")
-            # Fourier B field = Cross product  B = ik \cross A 
+            # Fourier B field = Cross product  B = i*k x A 
             field = magnetic_field_crossproduct(kvec, field)
-            # memoryUse = python_process.memory_info()[0]/2.**30
-            # print('Memory used: %.1f GB'%memoryUse)
-            del kvec # Huge array which we dont need anymore 
+            del kvec  # Huge array which we don't need anymore 
             if garbagecollect:  # type: ignore
                 timeg = time.time()
                 print ("Deleted kvec. Collecting garbage..")
                 gc.collect()
-                memoryUse = python_process.memory_info()[0]/2.**30
-                print('Memory used: %.1f GB'%memoryUse)
-                print ("Garbage collected in %i seconds"%(time.time()-timeg))
+                memoryUse = python_process.memory_info()[0] / 2.**30
+                print ('Memory used: %.1f GB' % memoryUse)
+                print ("Garbage collected in %i seconds" % (time.time() - timeg))
 
-            # B_field = scipy.fftpack.ifftn(fourier_B_field,axes=(0,1,2))*N**3
             if int(sys.version[0]) >= 3:
-                # B field is the inverse fourier transform of fourier_B_field
-                run_ift = pyfftw.builders.irfftn(field,s=(N,N,N),axes=(0,1,2)
-                    , auto_contiguous=False, auto_align_input=False, avoid_copy=True,threads=48)
+                # B field is the inverse Fourier transform of the Fourier B field
+                run_ift = pyfftw.builders.irfftn(field, s=(N, N, N), axes=(0, 1, 2),
+                    auto_contiguous=False, auto_align_input=False, avoid_copy=True, threads=48)
                 field = run_ift()
-                B_field = field # re-name it B-field for clarity
-                # memoryUse = python_process.memory_info()[0]/2.**30
-                # print('Memory used: %.1f GB'%memoryUse)
-                if garbagecollect: # type: ignore
+                B_field = field  # re-name it for clarity
+                if garbagecollect:  # type: ignore
                     timeg = time.time()
                     print ("Ran IFFT. Collecting garbage..")
                     gc.collect()
-                    memoryUse = python_process.memory_info()[0]/2.**30
-                    print('Memory used: %.1f GB'%memoryUse)
-                    print ("Garbage collected in %i seconds"%(time.time()-timeg))
-
+                    memoryUse = python_process.memory_info()[0] / 2.**30
+                    print ('Memory used: %.1f GB' % memoryUse)
+                    print ("Garbage collected in %i seconds" % (time.time() - timeg))
             else:
                 sys.exit("WARNING, USING PYTHON2. PLEASE RUN WITH PYTHON3. EXITING")
-                # B_field = pyfftw.interfaces.scipy_fftpack.ifftn(fourier_B_field,axes=(0,1,2))
-            print ("Resulting magnetic field shape: %s"%str(B_field.shape))
-
-        if not already_computed: 
-            print ("Saving unnormalised magnetic field to %s, such that it can be used again"%Bfield_file)
-            # Magnetic field also depends on the pixel size assumed (since it affects K)
+            
+            print ("Resulting magnetic field shape: %s" % str(B_field.shape))
+            print ("Saving unnormalised magnetic field to %s, such that it can be used again" % Bfield_file)
             np.save(Bfield_file, B_field)
 
         ## Using radial symmetry in a way where we can only use 1/8th of the cube
@@ -1671,7 +1659,8 @@ if __name__ == '__main__':
             print("Generating ne cube with fluctuations")
             # Generate fluctuations in ne following the mean profile or the requested beta function
             ne_3d = gen_ne_fluct(N = N, pixsize=pixsize, xi = xi, Lambda_max=Lambda_max, indices=True
-                                , Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct)
+                                , Lambda_min=None, mu=mu_ne_fluct, s=sigma_ne_fluct
+                                , not_upsample_ne=not_upsample_ne)
 
             # Vector denoting the real space positions. The 0 point is in the middle.
             # Now runs from -31 to +32 which is 64 values. Or 0 to +32 when subcube=True

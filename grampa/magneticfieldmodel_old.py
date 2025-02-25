@@ -1566,7 +1566,7 @@ if __name__ == '__main__':
     print ("Using parameters:")
     print (" xi=%.2f (n=%.2f)"%(xi,xi-2))
     print (" N=%i"%N)
-    print (" eta=%.1f"%eta)
+    print (" eta=%.2f"%eta)
     print (" B0=%.1f"%B0)
     print (" pixsize=%.1f"%pixsize)
     print (" sourcename= %s"%sourcename)

@@ -1468,6 +1468,7 @@ if __name__ == '__main__':
     parser.add_argument('-mu_ne_fluct', '--mu_ne_fluct', help = 'Mean of the fluctuations in the electron density', type = float, default = 1.0)
     parser.add_argument('-sigma_ne_fluct', '--sigma_ne_fluct', help = 'Standard deviation of the fluctuations in the electron density', type = float, default = 0.2)    
     parser.add_argument('-not_upsample_ne' ,'--not_upsample_ne', help='Whether to NOT upsample a smaller ne cube to get 2048', type=bool, default=False)
+    parser.add_argument('-normalise_by_mean_profile' ,'--normalise_by_mean_profile', help='Whether to normalise by mean profile instead of fluctuating ne', type=bool, default=False)
 
     parser.add_argument('-testing','--testing', help='Produce validation plots. Default False', default=False, type=bool)
     
@@ -1505,6 +1506,7 @@ if __name__ == '__main__':
     saveresults = args['saveresults']
     savedir = args['savedir']
     not_upsample_ne = args['not_upsample_ne']
+    normalise_by_mean_profile = args['normalise_by_mean_profile']
     if savedir[-1] != "/":
         savedir += "/"
     if not os.path.exists(savedir):
@@ -1587,6 +1589,7 @@ if __name__ == '__main__':
         print(" mu_ne_fluct = %.2f"%mu_ne_fluct)
         print(" sigma_ne_fluct = %.2f"%sigma_ne_fluct)
         print(" not_upsample_ne = %s"%not_upsample_ne)
+        print(" normalise by mean ne = %s"%normalise_by_mean_profile)
     print (" testing= %s"%(testing))
 
     # The electron density model (can replace by own model)
@@ -1731,9 +1734,31 @@ if __name__ == '__main__':
         # Normalise the B field such that it follows the electron density profile ^eta
         print ("Normalising magnetic field profile with electron density profile")
         # if we fluctuate ne, we cant have subcubes for the B-field normalisation
+        # unless we normalise by the mean profile
         if fluctuate_ne:
-            subcube=False
-        B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube)
+            if normalise_by_mean_profile:
+                subcube = True
+
+                # Generate the electron density field without fluctuations
+                xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
+                ne_3d_mean = ne_funct(xvec_length)
+                del xvec_length
+                if not np.isfinite(ne_3d_mean[0,0,0]):
+                    # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
+                    ne_3d_mean[c,c,c] = ne_3d_mean[0,0+1,0]                
+                ne0 = ne_3d_mean[0,0,0]
+
+                B_field_norm, ne_3d_mean = normalise_Bfield(ne_3d_mean, ne0, B_field, eta, B0, subcube)
+
+            else: # normalise by fluctuating profile
+                subcube=False
+                B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube)
+
+        else: # not fluctuating ne
+            subcube = True 
+            B_field_norm, ne_3d = normalise_Bfield(ne_3d, ne0, B_field, eta, B0, subcube)
+
+
         # memoryUse = python_process.memory_info()[0]/2.**30
         # print('Memory used: %.1f GB'%memoryUse)
         del B_field # We dont need B field unnormalised anymore 

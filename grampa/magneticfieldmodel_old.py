@@ -1786,7 +1786,8 @@ if __name__ == '__main__':
 
         print ("Calculating rotation measure images.")
         # now we need full 3D density cube
-        if subcube:
+        if subcube and not fluctuate_ne:
+            # if fluctuate ne, then we dont want to cube from subcube, even if subcube=True
             ne_3d = cube_from_subcube(ne_3d, N)
 
         # Calculate the RM by integrating over the 3rd axis

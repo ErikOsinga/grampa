@@ -1716,7 +1716,12 @@ if __name__ == '__main__':
             # The norm of the position vector            
             xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
             # Generate the electron density field without fluctuations
-            ne_3d = ne_funct(xvec_length)
+            if usemean_ne:
+                print("Generating ne cube without fluctuations. Using the mean profile")
+                ne_3d = ne_mean(xvec_length, r500)
+            else:
+                print("Generating ne cube without fluctuations. Using the beta model")
+                ne_3d = ne_funct(xvec_length)
 
         del xvec_length # We dont need xvec_length anymore
 
@@ -1741,11 +1746,18 @@ if __name__ == '__main__':
 
                 # Generate the electron density field without fluctuations
                 xvec_length = xvector_length(N, 3, pixsize, subcube=subcube)
-                ne_3d_mean = ne_funct(xvec_length)
+                if usemean_ne:
+                    print("Normalising by mean profile from mean_ne")
+                    ne_3d_mean = ne_mean(xvec_length, r500)
+                else:
+                    print("Normalising by mean profile from beta model")
+                    ne_3d_mean = ne_funct(xvec_length)
                 del xvec_length
+
                 if not np.isfinite(ne_3d_mean[0,0,0]):
                     # Make sure n_e is not infinite in the center. Just set it to the pixel next to it
                     ne_3d_mean[c,c,c] = ne_3d_mean[0,0+1,0]                
+                
                 ne0 = ne_3d_mean[0,0,0]
 
                 B_field_norm, ne_3d_mean = normalise_Bfield(ne_3d_mean, ne0, B_field, eta, B0, subcube)

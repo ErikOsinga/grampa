@@ -7,4 +7,4 @@ magneticfieldmodels.ipynb shows an example for educational purposes.
 
 
 
-If you use this code, please cite Osinga et al. 2022 (https://ui.adsabs.harvard.edu/abs/2022A%26A...665A..71O/abstract) and Osinga et al. 2025 (https://arxiv.org/abs/2408.07178)
+If you use this code, please cite Osinga et al. 2022 (https://ui.adsabs.harvard.edu/abs/2022A%26A...665A..71O/abstract) and Osinga et al. 2025 (https://arxiv.org/abs/2408.07178). If you use the lognormal density fluctuations, please cite Khadir+2025 (in prep.) and PyFC (https://www.piwheels.org/project/pyfc/)

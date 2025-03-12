@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pyfftw
 import pyFC
+plt.close('all') # for some reason PyFC generates an empty matplotlib image
 
 from scipy import stats
 from astropy.convolution import convolve, Gaussian2DKernel
@@ -633,9 +634,9 @@ def shell_averaged_power_spectrum2D(field, multiply_volume=False):
 
     return k_values, Abins
 
-def plot_Bfield_amp_vs_radius(B_field_norm, pixsize, dens_model, B0):
+def plot_Bfield_amp_vs_radius(B_field_norm, pixsize, dens_model, B0, savefig=None, show=True):
     """
-    Plots only made when --testing is enabled
+    Plots only made when --testing is enabled or it's called explicitly (e.g. in test_magneticfieldmodel.py)
     """
     N = len(B_field_norm)
 
@@ -644,7 +645,9 @@ def plot_Bfield_amp_vs_radius(B_field_norm, pixsize, dens_model, B0):
     plt.imshow(B_field_amplitude[:,:,N//2])
     plt.title("Normalised B field amplitude, central slice")
     plt.colorbar()
-    plt.show()
+    if show:
+        plt.show()
+    plt.close()
 
     # Plot the profile of the central slice
     all_r, profile = radial_profile(B_field_amplitude[:,:,N//2-1], center=[N//2-1,N//2-1])
@@ -655,9 +658,15 @@ def plot_Bfield_amp_vs_radius(B_field_norm, pixsize, dens_model, B0):
     density = dens_model(all_r)
     plt.plot(all_r,((density/density[0])**0.5)*B0,label='Density profile $^{0.5}$')
     plt.legend()
-    plt.show()
+    if savefig is not None:
+        plt.savefig(savefig)
+    if show:
+        plt.show()
+    plt.close()
+    
+    return all_r, profile, density
 
-def plot_B_field_powerspectrum(B_field_norm, xi, Lambda_max):
+def plot_B_field_powerspectrum(B_field_norm, xi, Lambda_max, savefig=None, show=True):
     """
     Plots only made when --testing is enabled
     """
@@ -678,7 +687,13 @@ def plot_B_field_powerspectrum(B_field_norm, xi, Lambda_max):
     plt.legend()
     plt.title(f"Power spectrum of normalised B-field. {Lambda_max=} kpc")
     plt.tight_layout()
-    plt.show()
+    if savefig is not None:
+        plt.savefig(savefig)
+    if show:
+        plt.show()
+    plt.close()
+
+    return k_values, Pk_values, theoretical
 
 def plotRMimage(RMimage, pixsize, title=''):
     N = len(RMimage)

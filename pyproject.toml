@@ -1,0 +1,29 @@
+[project]
+name = "grampa"
+version = "0.0.1"
+authors = [
+  { name="Erik Osinga", email="e.osinga.astro@gmail.com" },
+]
+description = "Gaussian Random-fields Approximation for Magnetic-fields with Python Algorithms"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "astropy",
+    "matplotlib",
+    "numpy",
+    "psutil",
+    "pyFC",
+    "pyFFTW",
+    "scipy",
+    "skimage"
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+license = {file = "LICENSE"}
+
+
+[project.urls]
+Homepage = "https://github.com/ErikOsinga/magneticfields"
+Issues = "https://github.com/ErikOsinga/magneticfields/issues"

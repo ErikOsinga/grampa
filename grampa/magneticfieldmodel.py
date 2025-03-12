@@ -272,7 +272,7 @@ class MagneticFieldModel:
 
         if not self.recompute and status == 'fully computed':
             dtime = time.time()-self.starttime
-            self.logger.info(f"Script fully finished. Took {dtime:%.1f} seconds to check results")
+            self.logger.info("Script fully finished. Took %i seconds to check results"%(dtime))
             self.logger.info("Results already computed and recompute=False, exiting.")
             sys.exit("Results already computed and recompute=False, exiting.")
 

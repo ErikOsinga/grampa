@@ -12,10 +12,9 @@ import time
 import gc 
 import psutil
 import logging
-
-import magneticfieldmodel_utils as mutils
 from collections.abc import Callable
 
+from grampa import magneticfieldmodel_utils as mutils
 
 cosmo = FlatLambdaCDM(H0=70, Om0=0.3) # TODO, make optional
 

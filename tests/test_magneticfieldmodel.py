@@ -2,8 +2,8 @@ import unittest
 import numpy as np
 np.random.seed(42)  # reproducibility
 
-import magneticfieldmodel
-import magneticfieldmodel_utils as mutils
+from grampa import magneticfieldmodel
+from grampa import magneticfieldmodel_utils as mutils
 # export PYTHONPATH="$PYTHONPATH:../grampa"
 
 def assign_default():

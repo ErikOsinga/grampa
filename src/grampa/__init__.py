@@ -13,5 +13,5 @@ Modules:
 """
 
 # __version__ = version('GRAMPA')
-__version__ = "0.1.0"
+__version__ = "0.0.2"
 __author__ = "Erik Osinga"

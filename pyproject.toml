@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "grampa"
-version = "0.0.1"
+version = "0.0.2"
 authors = [{ name="Erik Osinga", email="your_email@example.com" }]
 description = "Gaussian Random Magnetic Fields Approximation"
 readme = "README.md"

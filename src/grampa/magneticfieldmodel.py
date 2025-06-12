@@ -122,7 +122,7 @@ class MagneticFieldModel:
         # log parameters to file
         self.log_parameters()
 
-    def check_lambdamax(self, lambdamax):
+    def check_lambdamax(self, lambdamax: float | None) -> float:
         if lambdamax is None:
             # Smallest possible k mode (k=1) corresponds to Lambda=(N*pixsize)/2, one reversal
             lambdamax =(self.N*self.pixsize)/2
@@ -507,7 +507,7 @@ class MagneticFieldModel:
 
         return RMimage, RMimage_half, RMconvolved, RMhalfconvolved
 
-    def computeBfromA(self, vectorpotential_file, field=None):
+    def computeBfromA(self, vectorpotential_file: str, field: np.ndarray | None = None) -> np.ndarray:
         """
         Compute the magnetic field from the vector potential. Cross product of k and A
         """

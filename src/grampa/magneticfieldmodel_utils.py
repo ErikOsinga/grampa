@@ -10,19 +10,19 @@ from astropy.convolution import convolve, Gaussian2DKernel
 import logging
 logger = logging.getLogger(__name__)
 
-def beta_model(r, ne0=0.0031, r_c=341, beta=0.77):
+def beta_model(r_kpc: float | np.ndarray, ne0_cm3: float = 0.0031, rc_kpc: float = 341, beta: float = 0.77) -> float | np.ndarray:
     """
     Typical beta model for cluster electron density profile
 
     default is Osinga+24 parameters for Abell 2256, from Remi Adam
     
-    r    -- float or array -- radius in kpc [kpc] 
-    ne0  -- float  -- central electron density in cm^-3
-    r_c  -- float  -- core radius in kpc
-    beta -- float  -- beta parameter
+    r_kpc    -- float or array -- radius in kpc [kpc] 
+    ne0_cm3  -- float          -- central electron density in cm^-3
+    rc_kpc   -- float          -- core radius in kpc
+    beta     -- float          -- beta parameter
     
     """    
-    return ne0 * (1+(r/r_c)**2)**(-3*beta/2)
+    return ne0_cm3 * (1 + (r_kpc / rc_kpc)**2)**(-3 * beta / 2)
 
 def RM_integration(n_e,B_field,pixsize,axis):
     """

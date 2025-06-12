@@ -24,41 +24,38 @@ def beta_model(r_kpc: float | np.ndarray, ne0_cm3: float = 0.0031, rc_kpc: float
     """    
     return ne0_cm3 * (1 + (r_kpc / rc_kpc)**2)**(-3 * beta / 2)
 
-def RM_integration(n_e,B_field,pixsize,axis):
+def RM_integration(n_e: np.ndarray, B_field: np.ndarray, pixsize: int, axis: int) -> np.ndarray:
     """
     Calculate Rotation measure by integrating over a certain axis
     (Riemann sum)
     
     Integrating over one pixel is integration over pixsize*1000 parsecs.
     """
-    return 0.81*pixsize*1e3*np.sum(n_e*B_field[:,:,:,axis],axis=axis)
+    return 0.81 * pixsize * 1e3 * np.sum(n_e * B_field[:, :, :, axis], axis=axis)
 
-def RM_halfway(n_e,B_field,pixsize,axis):
+def RM_halfway(n_e: np.ndarray, B_field: np.ndarray, pixsize: int, axis: int) -> np.ndarray:
     """
     Calculate Rotation measure by 'integrating' over a certain axis.
-    Now only integrate over half the axis
-    
-    
+    Now only integrate over half the axis.
+
     Integrating over one pixel is integration over pixsize*1000 parsecs.
+
+    Parameters:
+    n_e -- np.ndarray -- Electron density array
+    B_field -- np.ndarray -- Magnetic field array
+    pixsize -- int -- Pixel size in kpc
+    axis -- int -- Axis over which to integrate
+
+    Returns:
+    float -- Rotation measure value
     """
     N = len(n_e)
     # For keeping track over which axis we want to do the integrating
-    if axis == 0:
-        N0 = N//2
-        N1 = N
-        N2 = N
-    elif axis == 1:
-        N0 = N 
-        N1 = N//2
-        N2 = N
-    elif axis == 2:
-        N0 = N 
-        N1 = N
-        N2 = N//2
-    else:
+    N0, N1, N2 = (N // 2 if axis == i else N for i in range(3))
+    if axis not in {0, 1, 2}:
         raise ValueError("Axis not implemented")
         
-    return 0.81*pixsize*1e3*np.sum(n_e[:N0,:N1,:N2]*B_field[:N0,:N1,:N2,axis],axis=axis)
+    return 0.81 * pixsize * 1e3 * np.sum(n_e[:N0, :N1, :N2] * B_field[:N0, :N1, :N2, axis], axis=axis)
 
 def fftIndgen(n):
     a = list(range(0, n//2+1))
@@ -642,9 +639,12 @@ def plot_Bfield_amp_vs_radius(B_field_norm, pixsize, dens_model, B0, savefig=Non
 
     # Calculate the amplitude of the B field
     B_field_amplitude = np.linalg.norm(B_field_norm,axis=3)
-    plt.imshow(B_field_amplitude[:,:,N//2])
     plt.title("Normalised B field amplitude, central slice")
-    plt.colorbar()
+    plt.xlabel("x [kpc]")
+    plt.ylabel("y [kpc]")
+    extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
+    plt.imshow(B_field_amplitude[:,:,N//2], extent=extent, origin='lower', cmap='viridis')
+    plt.colorbar(label=r"B field amplitude [$\mu$G]")
     if show:
         plt.show()
     plt.close()
@@ -657,6 +657,8 @@ def plot_Bfield_amp_vs_radius(B_field_norm, pixsize, dens_model, B0, savefig=Non
     # Compare with density profile
     density = dens_model(all_r)
     plt.plot(all_r,((density/density[0])**0.5)*B0,label='Density profile $^{0.5}$')
+    plt.xlabel(r'$r$ [kpc]')
+    plt.ylabel(r'$B$ [$\mu$G]')
     plt.legend()
     if savefig is not None:
         plt.savefig(savefig)
@@ -700,8 +702,12 @@ def plotRMimage(RMimage, pixsize, title=''):
 
     extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
 
-    plt.imshow(RMimage,extent=extent,origin='lower')
-    cbar = plt.colorbar()
+    # make sure symmetric colorbar
+    vmax = np.max(np.abs(RMimage))
+    vmin = -vmax
+
+    plt.imshow(RMimage,extent=extent,origin='lower', cmap='RdBu_r', vmin=vmin, vmax=vmax)
+    cbar = plt.colorbar(label=r'RM [rad m$^{-2}$]')
     cbar.set_label("RM [rad m$^{-2}$]")
     plt.xlabel('x [kpc]')
     plt.ylabel('y [kpc]')
@@ -736,7 +742,9 @@ def plot_ne_profile(neimage, pixsize, ne_funct, title=''):
     # Compare with density profile
     density = ne_funct(all_r)
     plt.plot(all_r,density,label='Density profile function')
-
+    plt.xlabel(r'$r$ [kpc]')
+    plt.ylabel(r'$n_e$ [cm$^{-3}$]')
+    plt.title(title)
     plt.legend()
     plt.show()
 
@@ -829,7 +837,7 @@ def plotdepolimage(Polintimage, pixsize, title=""):
     """ Plot depol image"""
     N = len(Polintimage)
     extent = [-(N//2+1)*pixsize, (N//2)*pixsize, -(N//2+1)*pixsize, (N//2)*pixsize]
-    plt.imshow(Polintimage,extent=extent,origin='lower',vmin=0.0,vmax=1.0)
+    plt.imshow(Polintimage,extent=extent,origin='lower',vmin=0.0,vmax=1.0, cmap='inferno')
     cbar = plt.colorbar()
     cbar.set_label("Depol [$p$/$p_0$]")
     plt.xlabel('x [kpc]')

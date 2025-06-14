@@ -29,7 +29,24 @@ classifiers = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
-
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "isort",
+    "pre-commit",
+    "ruff",
+    "pytest",
+    "pytest-cov",
+    "sphinx",
+    "myst-parser",
+    "sphinx-autodoc-typehints",
+    "sphinx-copybutton",
+    "sphinx-autoapi",
+    "sphinx-argparse",
+    "furo",
+    "pytest-rerunfailures",
+    "pytest-xdist",
+]
 
 [project.urls]
 Homepage = "https://github.com/ErikOsinga/grampa"

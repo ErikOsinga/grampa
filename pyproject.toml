@@ -29,5 +29,7 @@ classifiers = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+
+
 [project.urls]
-Homepage = "https://github.com/ErikOsinga/magneticfields"
+Homepage = "https://github.com/ErikOsinga/grampa"

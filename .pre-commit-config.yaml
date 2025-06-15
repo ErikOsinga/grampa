@@ -64,7 +64,7 @@ repos:
         name: Disallow improper capitalization
         language: pygrep
         entry: PyBind|Numpy|Cmake|CCache|Github|PyTest
-        exclude: .pre-commit-config.yaml
+        exclude: '(.pre-commit-config\.yaml|README\.md)$'
 
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: "v0.24.1"

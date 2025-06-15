@@ -20,3 +20,26 @@ This software is provided under an open-source license. Please check the GitHub 
 
 ## Contact
 For questions or feedback, please reach out to the authors or open an issue on the [Github repository](https://github.com/ErikOsinga/magneticfields/)
+
+
+## Developing
+
+Pull requests are welcome for users that want to add features!
+
+GRAMPA uses a set of developer tools that can be installed with
+
+`git clone git@github.com:ErikOsinga/grampa.git`
+`cd grampa`
+`pip install '.[dev]'`
+
+These tools can run upon git commit by using
+
+`pre-commit install`
+
+## Versioning
+
+GRAMPA will follow the [Conventional Commit Message format:](https://www.conventionalcommits.org/en/v1.0.0/) for versioning
+
+- For a feature (MINOR VERSION UPDATE): (e.g. git commit -m "feat(optional scope): description")
+- For a bugfix (PATCH VERSION UPDATE): (e.g. git commit -m "fix(optional scope): description")
+- For a breaking change (!) (MAJOR VERSION UPDATE): (e.g. git commit -m "featorfix!(optional scope): description")

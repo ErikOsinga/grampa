@@ -1,4 +1,12 @@
-from importlib.metadata import version
+from __future__ import annotations
+
+from .__version import version as __version__
+from .__version import version_tuple as __version_tuple__
+
+__all__ = [
+    "__version__",
+    "__version_tuple__",
+]
 
 """
 GRAMPA: A package for analyzing magnetic fields.
@@ -11,7 +19,3 @@ Modules:
 - magneticfieldmodel.py
 - visualization (todo)
 """
-
-# __version__ = version('GRAMPA')
-__version__ = "0.0.2"
-__author__ = "Erik Osinga"

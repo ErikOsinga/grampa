@@ -34,10 +34,10 @@ dynamic = ["version"]
 version.source = "vcs"
 build.hooks.vcs.version-file = "src/grampa/__version.py"
 metadata.allow-direct-references = true
-build.targets.wheel.packages = ["grampa"]
+build.targets.wheel.packages = ["src/grampa"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+# [tool.setuptools.packages.find]
+# where = ["src"]
 
 [project.optional-dependencies]
 dev = [

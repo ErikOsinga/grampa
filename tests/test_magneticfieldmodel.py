@@ -35,7 +35,7 @@ def assign_default():
         "lambdamax_ne_fluct": 100,
         "subcube_ne": True,
         "testing": False,
-        "savedir": "./",
+        "savedir": "./testdata",
         "saverawfields": True,
         "saveresults": True,
         "redshift_dilution": True,

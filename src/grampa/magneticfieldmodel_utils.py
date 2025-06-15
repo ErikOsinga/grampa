@@ -960,7 +960,10 @@ def plot_B_field_powerspectrum(
         * (k_values[0] ** alpha)
     )
     plt.plot(
-        k_values, theoretical, label=f"Pk = {amplitude:.e} k**-{alpha:.1f}", ls="dashed"
+        k_values,
+        theoretical,
+        label=f"Pk = {amplitude:.2e} k**-{alpha:.1f}",
+        ls="dashed",
     )
     plt.xlabel("$k$")
     plt.ylabel("$P(k)$")

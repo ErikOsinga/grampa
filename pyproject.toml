@@ -39,7 +39,7 @@ build.targets.wheel.packages = ["src/grampa"]
 [tool.hatch.version]
 version.source = "regex"
 path    = "src/grampa/__version.py"
-pattern = "__version__ = \"(?P<version>.+)\""
+pattern = '^__version__ = version = "(?P<version>[^"]+)"$'
 
 # [tool.setuptools.packages.find]
 # where = ["src"]

@@ -1,12 +1,14 @@
 [build-system]
-requires = ["hatchling"]
+requires = [
+  "hatchling",
+  "hatch-vcs"
+]
 build-backend = "hatchling.build"
 
 [project]
 name = "grampa"
-version = "0.0.2"
-authors = [{ name="Erik Osinga", email="your_email@example.com" }]
-description = "Gaussian Random Magnetic Fields Approximation"
+authors = [{ name="Erik Osinga", email="erik.osinga@utoronto.ca" }]
+description = "Gaussian Random-fields Approximation for Magnetic-fields with Python Algorithms (GRAMPA)"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.8"
@@ -25,6 +27,14 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]
+
+dynamic = ["version"]
+
+[tool.hatch]
+version.source = "vcs"
+build.hooks.vcs.version-file = "src/grampa/__version.py"
+metadata.allow-direct-references = true
+build.targets.wheel.packages = ["grampa"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -31,10 +31,15 @@ classifiers = [
 dynamic = ["version"]
 
 [tool.hatch]
-version.source = "vcs"
-build.hooks.vcs.version-file = "src/grampa/__version.py"
+# version.source = "vcs"
+# build.hooks.vcs.version-file = "src/grampa/__version.py"
 metadata.allow-direct-references = true
 build.targets.wheel.packages = ["src/grampa"]
+
+[tool.hatch.version]
+version.source = "regex"
+path    = "src/grampa/__version.py"
+pattern = "__version__ = \"(?P<version>.+)\""
 
 # [tool.setuptools.packages.find]
 # where = ["src"]

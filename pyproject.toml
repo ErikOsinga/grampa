@@ -50,3 +50,93 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/ErikOsinga/grampa"
+
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+]
+
+# Same as Black.
+line-length = 88
+indent-width = 4
+
+# Assume Python 3.8
+target-version = "py38"
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+select = ["E4", "E7", "E9", "F"]
+ignore = []
+# Full list of rules from scientific-python-cookiecutter.
+# More can be enabled as needed / wanted.
+extend-select = [
+    # "B",        # flake8-bugbear
+    "I",        # isort
+    # "ARG",      # flake8-unused-arguments
+    # "C4",       # flake8-comprehensions
+    # "EM",       # flake8-errmsg
+    # "ICN",      # flake8-import-conventions
+    # "G",        # flake8-logging-format
+    # "PGH",      # pygrep-hooks
+    # "PIE",      # flake8-pie
+    # "PL",       # pylint
+    # "PT",       # flake8-pytest-style
+    # "PTH",      # flake8-use-pathlib
+    # "RET",      # flake8-return
+    # "RUF",      # Ruff-specific
+    # "SIM",      # flake8-simplify
+    # "T20",      # flake8-print
+    "UP",       # pyupgrade
+    # "YTT",      # flake8-2020
+    # "EXE",      # flake8-executable
+    "NPY",      # NumPy specific rules
+    "PD",       # pandas-vet
+]
+isort.required-imports = ["from __future__ import annotations"]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
